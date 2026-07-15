@@ -1,0 +1,389 @@
+/* ДЕМО-РЕЖИМ: сервера нет, все данные — условные заглушки в браузере.
+   Цены справочников рандомизированы и НЕ являются реальными ценами типографии. */
+(function () {
+  'use strict';
+
+  /* ---------- условная конфигурация цен ---------- */
+  let seed = 20260715;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const scale = () => 0.82 + rnd() * 0.5; // ×0.82…1.32
+
+  const cfg = JSON.parse(JSON.stringify(window.DEMO_PRICING.defaults));
+  cfg.currency = { materials: 95, works: 75 };
+  const moneySubtrees = ['blockPapers', 'coverPapers', 'bindingMaterials', 'binderBoard',
+    'print', 'postpress', 'binding', 'uv', 'plotter', 'sheetPapers'];
+  const skipKeys = new Set(['thickness', 'unit', 'size', 'machines', 'press', 'formats',
+    'hooksPerSide', 'springs', 'colorFactors', 'minBatch', 'area', 'kDigital', 'kLam',
+    'printedArea', 'blankArea', 'knifeLife', 'wireSpoolUseFactor']);
+  function scaleTree(node, key) {
+    if (skipKeys.has(key)) return node;
+    if (typeof node === 'number') return Math.round(node * scale() * 1e6) / 1e6;
+    if (node && typeof node === 'object') {
+      for (const k of Object.keys(node)) node[k] = scaleTree(node[k], k);
+    }
+    return node;
+  }
+  for (const k of moneySubtrees) if (cfg[k]) cfg[k] = scaleTree(cfg[k], k);
+
+  const engines = window.DEMO_PRICING.engines;
+
+  /* ---------- вымышленные данные ---------- */
+  const USERS = [
+    { id: 1, login: 'demo', name: 'Демо-руководитель', role: 'admin', active: 1 },
+    { id: 2, login: 'ivanova', name: 'Иванова А.', role: 'manager', active: 1 },
+    { id: 3, login: 'petrov', name: 'Петров С.', role: 'manager', active: 1 },
+    { id: 4, login: 'sidorova', name: 'Сидорова М.', role: 'manager', active: 1 },
+    { id: 5, login: 'kuznecov', name: 'Кузнецов Д.', role: 'manager', active: 1 },
+  ];
+  const CLIENTS = [
+    { id: 1, name: 'Издательство «Парус»', contact_person: 'Мария', phone: '+7 (900) 000-11-22', email: 'order@parus-demo.ru', company: 'ООО «Парус»', notes: '' },
+    { id: 2, name: 'ИД «Меридиан»', contact_person: 'Олег', phone: '+7 (900) 000-33-44', email: 'print@meridian-demo.ru', company: 'ООО «Меридиан»', notes: 'Постоянный клиент' },
+    { id: 3, name: '«Умные книги»', contact_person: 'Анна', phone: '+7 (900) 000-55-66', email: 'hello@smartbooks-demo.ru', company: 'ООО «Умные книги»', notes: '' },
+    { id: 4, name: 'Музей «Наследие»', contact_person: 'Ирина', phone: '+7 (900) 000-77-88', email: 'shop@heritage-demo.ru', company: 'АНО «Наследие»', notes: 'Каталоги выставок' },
+    { id: 5, name: 'Кофейня «Зерно»', contact_person: 'Павел', phone: '+7 (900) 000-99-00', email: 'zerno@demo.ru', company: 'ИП Демидов', notes: 'Блокноты с логотипом' },
+    { id: 6, name: 'Фонд «Открытие»', contact_person: 'Светлана', phone: '+7 (900) 111-22-33', email: 'fund@demo.ru', company: 'БФ «Открытие»', notes: '' },
+  ];
+
+  const now = new Date();
+  const day = 86400000;
+  const iso = (d) => new Date(d).toISOString().slice(0, 10);
+  const dt = (d) => new Date(d).toISOString().slice(0, 19).replace('T', ' ');
+
+  function demoCalc(type, params) {
+    try { return engines[type].calculate(params, cfg); } catch (e) { return null; }
+  }
+  const bookParams = (tiraj, pages) => ({
+    printType: 'цифра', tiraj, format: 'A4', blockPages: pages, blockColors: 'четыре', blockPaper: 'Офсет 80',
+    insertPages: 0, insertColors: 'нет', insertPaper: 'нет', endpaperColors: 'нет',
+    coverPaper: 'Мелов 150', coverColors: 'четыре', lamination: '30 М 1 ст.', caseMaterial: 'нет',
+    coverStamping: 'нет', coverDie: 'нет', endpaperStamping: 'нет', endpaperDie: 'нет',
+    spine: 'прямой', pantones: 0, discount: 'k=0',
+  });
+  const brochParams = (tiraj) => ({
+    printType: 'цифра', tiraj, format: 'A5', blockPages: 24, blockColors: 'четыре', blockPaper: 'Мелов 115',
+    insertPages: 0, insertColors: 'нет', insertPaper: 'нет',
+    coverColorsFace: 'четыре', coverColorsBack: 'нет', coverPaper: 'Мелов 250', lamination: 'Нет',
+    binding: '2 скобы', sewing: 'Нет', stamping: 'нет', die: 'нет', pantones: 0, discount: 'k=0',
+  });
+  const nbParams = (tiraj) => ({
+    tiraj, format: 'A5', blockSheets: 50, blockColorsFace: 'один', blockColorsBack: 'нет', blockPaper: 'Офсет 80',
+    coverColorsFace: 'четыре', coverColorsBack: 'нет', coverPaper: 'Мелов 300 мат', coverPrintType: 'цифра',
+    lamination: '30 М 1 ст.', binding: 'мет пр кор', stamping: 'нет', die: 'нет', pantones: 0, discount: 'k=0',
+  });
+
+  const ORDER_DEFS = [
+    { title: 'Сборник стихов «Тихий свет», 7БЦ', type: 'books7', params: bookParams(300, 160), client: 1, mgr: 2, status: 'production', stage: 'print', due: 12 },
+    { title: 'Каталог выставки, брошюра А5', type: 'brochures', params: brochParams(1000), client: 4, mgr: 3, status: 'production', stage: 'postpress', due: 6 },
+    { title: 'Роман «Дальние берега», 7БЦ', type: 'books7', params: bookParams(500, 320), client: 2, mgr: 2, status: 'production', stage: 'binding', due: 9 },
+    { title: 'Блокноты с логотипом, А5', type: 'notebooks', params: nbParams(200), client: 5, mgr: 4, status: 'production', stage: 'done', due: 3 },
+    { title: 'Монография «История края»', type: 'books7', params: bookParams(200, 400), client: 6, mgr: 3, status: 'approval', due: 20 },
+    { title: 'Детская книга «Кот и звёзды»', type: 'books7', params: bookParams(1000, 48), client: 3, mgr: 4, status: 'calc', due: 30 },
+    { title: 'Методичка, брошюра на скобе', type: 'brochures', params: brochParams(300), client: 6, mgr: 5, status: 'calc', due: 14 },
+    { title: 'Фотоальбом юбилейный, 7БЦ', type: 'books7', params: bookParams(150, 120), client: 4, mgr: 2, status: 'ready', due: 2 },
+    { title: 'Ежедневники фирменные', type: 'notebooks', params: nbParams(500), client: 2, mgr: 5, status: 'shipped', due: -6 },
+    { title: 'Сборник рассказов, переиздание', type: 'books7', params: bookParams(800, 240), client: 1, mgr: 3, status: 'shipped', due: -15 },
+    { title: 'Путеводитель «Город N»', type: 'brochures', params: brochParams(2000), client: 3, mgr: 4, status: 'shipped', due: -30 },
+  ];
+
+  const ORDERS = ORDER_DEFS.map((d, i) => {
+    const calc = demoCalc(d.type, d.params) || {};
+    const created = now.getTime() - (40 - i * 3) * day;
+    return {
+      id: i + 1,
+      number: `2026-${String(i + 101).padStart(4, '0')}`,
+      client_id: d.client, client_name: CLIENTS.find((c) => c.id === d.client).name,
+      manager_id: d.mgr, manager_name: USERS.find((u) => u.id === d.mgr).name,
+      title: d.title, status: d.status, prod_stage: d.stage || '',
+      product_type: d.type,
+      params_json: JSON.stringify(d.params), calc_json: JSON.stringify(calc),
+      price: calc.priceTotal || 0, cost: calc.cost || 0, quantity: calc.quantity || d.params.tiraj,
+      due_date: iso(now.getTime() + d.due * day),
+      notes: i % 3 === 0 ? 'Демо-заказ: данные условные' : '',
+      created_at: dt(created), updated_at: dt(created + 2 * day),
+      log: [
+        { event: `Заказ создан (2026-${String(i + 101).padStart(4, '0')})`, user_name: USERS.find((u) => u.id === d.mgr).name, created_at: dt(created) },
+        ...(d.status !== 'calc' ? [{ event: 'Статус: calc → ' + d.status, user_name: USERS.find((u) => u.id === d.mgr).name, created_at: dt(created + day) }] : []),
+      ],
+    };
+  });
+
+  let TASKS = [
+    { id: 1, order_id: 1, user_id: 2, text: 'Согласовать макет обложки', due_date: iso(now.getTime() + 2 * day), done: 0 },
+    { id: 2, order_id: 2, user_id: 3, text: 'Уточнить тираж у клиента', due_date: iso(now.getTime() - day), done: 0 },
+    { id: 3, order_id: 5, user_id: 3, text: 'Отправить КП повторно', due_date: iso(now.getTime() + day), done: 0 },
+    { id: 4, order_id: 8, user_id: 2, text: 'Позвонить: заказ готов к выдаче', due_date: iso(now.getTime()), done: 1 },
+  ];
+  let nextTaskId = 5, nextOrderId = ORDERS.length + 1, nextClientId = CLIENTS.length + 1;
+
+  /* ---------- склад (остатки условные) ---------- */
+  const MATERIALS = [
+    ['Офсет 70', 'лист А3', 400, 500], ['Офсет 80', 'лист А3', 12500, 5000],
+    ['Офсет 100', 'лист А3', 2100, 1000], ['Офсет 120', 'лист А3', 0, 0],
+    ['Офсет 160', 'лист А3', 5400, 2000], ['Мелов 90', 'лист А3', 800, 0],
+    ['Мелов 115', 'лист А3', 4600, 1500], ['Мелов 135', 'лист А3', 0, 0],
+    ['Мелов 150', 'лист А3', 3800, 1000], ['Мелов 170', 'лист А3', 950, 500],
+    ['Мелов 200', 'лист А3', 1200, 0], ['Мелов 250', 'лист А3', 700, 800],
+    ['Мелов 300', 'лист А3', 500, 0], ['Картон переплётный', 'лист 100×70', 900, 200],
+    ['Эфалин', 'лист А1', 120, 50], ['Балакрон', 'пог. м', 45, 20],
+    ['Иск. кожа', 'пог. м', 12, 10],
+  ].map(([name, unit, qty, min_qty], i) => ({
+    id: i + 1, name, unit, qty, min_qty, notes: '',
+    created_at: dt(now.getTime() - 60 * day),
+  }));
+  let MOVES = [
+    { id: 1, material_id: 2, order_id: null, qty: 15000, reason: 'Поставка (демо)', user_name: 'Демо-руководитель', created_at: dt(now.getTime() - 20 * day) },
+    { id: 2, material_id: 2, order_id: 1, qty: -2500, reason: 'Заказ № 2026-0101', user_name: 'Иванова А.', created_at: dt(now.getTime() - 5 * day) },
+    { id: 3, material_id: 9, order_id: 1, qty: -420, reason: 'Заказ № 2026-0101', user_name: 'Иванова А.', created_at: dt(now.getTime() - 5 * day) },
+    { id: 4, material_id: 14, order_id: 3, qty: -180, reason: 'Заказ № 2026-0103', user_name: 'Иванова А.', created_at: dt(now.getTime() - 2 * day) },
+  ];
+  let nextMoveId = 5, nextMaterialId = MATERIALS.length + 1;
+
+  /* ---------- интеграции (демо) ---------- */
+  const BITRIX = { webhookUrl: 'https://raduga-demo.bitrix24.ru/rest/1/demo00000000/', inKey: 'demo1234567890ключ' };
+  let nextDealId = 421;
+
+  const taskView = (t) => ({
+    ...t,
+    order_number: (ORDERS.find((o) => o.id === t.order_id) || {}).number || '',
+    order_title: (ORDERS.find((o) => o.id === t.order_id) || {}).title || '',
+    user_name: (USERS.find((u) => u.id === t.user_id) || {}).name || '',
+  });
+
+  /* ---------- сессия ---------- */
+  const me = () => JSON.parse(sessionStorage.getItem('demo_user') || 'null');
+
+  /* ---------- перехват fetch ---------- */
+  const realFetch = window.fetch.bind(window);
+  const J = (data, status = 200) => Promise.resolve(new Response(JSON.stringify(data), {
+    status, headers: { 'Content-Type': 'application/json; charset=utf-8' },
+  }));
+
+  window.fetch = function (url, opts = {}) {
+    const u = typeof url === 'string' ? url : url.url;
+    if (!u.includes('/api/')) return realFetch(url, opts);
+    const method = (opts.method || 'GET').toUpperCase();
+    const path = u.slice(u.indexOf('/api/')).split('?')[0];
+    const qs = new URLSearchParams(u.includes('?') ? u.slice(u.indexOf('?') + 1) : '');
+    let body = {};
+    try { body = opts.body ? JSON.parse(opts.body) : {}; } catch (e) {}
+
+    // авторизация: любой логин/пароль
+    if (path === '/api/login') {
+      const user = USERS.find((x) => x.login === String(body.login || '').toLowerCase()) || USERS[0];
+      sessionStorage.setItem('demo_user', JSON.stringify(user));
+      return J({ user });
+    }
+    if (path === '/api/logout') { sessionStorage.removeItem('demo_user'); return J({}); }
+    if (path === '/api/me') return me() ? J({ user: me() }) : J({ error: 'Требуется вход' }, 401);
+    if (path === '/api/me/password') return J({ ok: true });
+    if (!me()) return J({ error: 'Требуется вход' }, 401);
+
+    if (path === '/api/users' && method === 'GET') return J(USERS);
+    if (path === '/api/users' && method === 'POST') return J({ error: 'В демо-версии пользователи не добавляются' }, 400);
+    if (path.startsWith('/api/users/')) return J({ ok: true });
+
+    if (path === '/api/clients' && method === 'GET') {
+      const q = (qs.get('q') || '').toLowerCase();
+      return J(CLIENTS.filter((c) => !q || c.name.toLowerCase().includes(q)).map((c) => ({
+        ...c,
+        orders_count: ORDERS.filter((o) => o.client_id === c.id && o.status !== 'cancelled').length,
+        orders_total: ORDERS.filter((o) => o.client_id === c.id && o.status !== 'cancelled').reduce((s, o) => s + o.price, 0),
+        created_at: dt(now.getTime() - 90 * day),
+      })));
+    }
+    if (path === '/api/clients' && method === 'POST') {
+      const c = { id: nextClientId++, name: body.name, contact_person: body.contact_person || '', phone: body.phone || '', email: body.email || '', company: body.company || '', notes: body.notes || '' };
+      CLIENTS.push(c); return J({ id: c.id });
+    }
+    if (path.startsWith('/api/clients/')) {
+      const id = Number(path.split('/')[3]);
+      const c = CLIENTS.find((x) => x.id === id);
+      if (method === 'PUT' && c) Object.assign(c, body);
+      if (method === 'DELETE') return J({ error: 'В демо-версии удаление отключено' }, 400);
+      return J({ ok: true });
+    }
+
+    // склад
+    if (path === '/api/stock' && method === 'GET') {
+      return J(MATERIALS.map((m) => ({
+        ...m,
+        last_move: (MOVES.find((mv) => mv.material_id === m.id) || {}).created_at || null,
+      })));
+    }
+    if (path === '/api/stock' && method === 'POST') {
+      if (MATERIALS.some((m) => m.name === body.name)) return J({ error: 'Материал с таким названием уже есть' }, 400);
+      const m = { id: nextMaterialId++, name: body.name, unit: body.unit || 'шт.', qty: +body.qty || 0, min_qty: +body.min_qty || 0, notes: body.notes || '', created_at: dt(now) };
+      MATERIALS.push(m); MATERIALS.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      return J({ id: m.id });
+    }
+    if (/^\/api\/stock\/\d+\/move$/.test(path) && method === 'POST') {
+      const id = Number(path.split('/')[3]);
+      const m = MATERIALS.find((x) => x.id === id);
+      if (!m) return J({ error: 'Материал не найден' }, 404);
+      const qty = +body.qty;
+      if (!isFinite(qty) || qty === 0) return J({ error: 'Укажите количество (не ноль)' }, 400);
+      m.qty = Math.round((m.qty + qty) * 100) / 100;
+      MOVES.unshift({ id: nextMoveId++, material_id: id, order_id: body.order_id || null, qty, reason: body.reason || '', user_name: me().name, created_at: dt(now) });
+      if (body.order_id) {
+        const o = ORDERS.find((x) => x.id === body.order_id);
+        if (o) o.log.push({ event: `Склад: ${qty > 0 ? 'возврат' : 'списание'} «${m.name}» ${Math.abs(qty)} ${m.unit}`, user_name: me().name, created_at: dt(now) });
+      }
+      return J({ ok: true, qty: m.qty });
+    }
+    if (/^\/api\/stock\/\d+\/moves$/.test(path)) {
+      const id = Number(path.split('/')[3]);
+      return J(MOVES.filter((mv) => mv.material_id === id).map((mv) => ({
+        ...mv, order_number: (ORDERS.find((o) => o.id === mv.order_id) || {}).number || '',
+      })));
+    }
+    if (/^\/api\/stock\/\d+$/.test(path)) {
+      const id = Number(path.split('/')[3]);
+      const m = MATERIALS.find((x) => x.id === id);
+      if (method === 'PUT' && m) { for (const k of ['name', 'unit', 'min_qty', 'notes']) if (body[k] != null) m[k] = k === 'min_qty' ? +body[k] : body[k]; return J({ ok: true }); }
+      if (method === 'DELETE') return J({ error: 'В демо-версии удаление отключено' }, 400);
+      return J({ ok: true });
+    }
+
+    // интеграции (демо: Битрикс24 «подключён», сделки создаются понарошку)
+    if (path === '/api/integrations' && method === 'GET') return J({ bitrix24: { ...BITRIX, configured: true } });
+    if (path === '/api/integrations' && method === 'PUT') {
+      if (body.bitrix24 && body.bitrix24.webhookUrl != null) BITRIX.webhookUrl = body.bitrix24.webhookUrl;
+      return J({ bitrix24: BITRIX });
+    }
+    if (/^\/api\/orders\/\d+\/bitrix$/.test(path) && method === 'POST') {
+      const id = Number(path.split('/')[3]);
+      const o = ORDERS.find((x) => x.id === id);
+      if (!o) return J({ error: 'Заказ не найден' }, 404);
+      const dealId = nextDealId++;
+      o.log.push({ event: `Отправлен в Битрикс24 (сделка #${dealId}, демо)`, user_name: me().name, created_at: dt(now) });
+      return J({ ok: true, dealId });
+    }
+
+    if (path === '/api/orders' && method === 'GET') {
+      let list = ORDERS.slice();
+      if (qs.get('status')) list = list.filter((o) => o.status === qs.get('status'));
+      if (qs.get('manager_id')) list = list.filter((o) => String(o.manager_id) === qs.get('manager_id'));
+      if (qs.get('client_id')) list = list.filter((o) => String(o.client_id) === qs.get('client_id'));
+      if (qs.get('q')) {
+        const q = qs.get('q').toLowerCase();
+        list = list.filter((o) => (o.number + o.title + o.client_name).toLowerCase().includes(q));
+      }
+      return J(list.slice().sort((a, b) => b.created_at < a.created_at ? -1 : 1));
+    }
+    if (path === '/api/orders' && method === 'POST') {
+      const id = nextOrderId++;
+      const o = {
+        id, number: `2026-${String(id + 100).padStart(4, '0')}`,
+        client_id: body.client_id || null,
+        client_name: (CLIENTS.find((c) => c.id === body.client_id) || {}).name || '',
+        manager_id: body.manager_id || me().id,
+        manager_name: (USERS.find((x) => x.id === (body.manager_id || me().id)) || {}).name || '',
+        title: body.title || '', status: body.status || 'calc', prod_stage: '',
+        product_type: body.product_type || '',
+        params_json: JSON.stringify(body.params || {}), calc_json: JSON.stringify(body.calc || {}),
+        price: body.price || 0, cost: body.cost || 0, quantity: body.quantity || 0,
+        due_date: body.due_date || '', notes: body.notes || '',
+        created_at: dt(now), updated_at: dt(now),
+        log: [{ event: 'Заказ создан (демо)', user_name: me().name, created_at: dt(now) }],
+      };
+      ORDERS.unshift(o);
+      return J({ id, number: o.number });
+    }
+    if (path.startsWith('/api/orders/')) {
+      const id = Number(path.split('/')[3]);
+      const o = ORDERS.find((x) => x.id === id);
+      if (!o) return J({ error: 'Заказ не найден' }, 404);
+      if (method === 'GET') return J({ ...o, tasks: TASKS.filter((t) => t.order_id === id).map(taskView) });
+      if (method === 'PUT') {
+        if (body.status && body.status !== o.status) {
+          o.log.push({ event: `Статус: ${o.status} → ${body.status}`, user_name: me().name, created_at: dt(now) });
+          if (body.status === 'production' && !o.prod_stage) o.prod_stage = 'print';
+        }
+        if (body.prod_stage != null && body.prod_stage !== o.prod_stage) {
+          o.log.push({ event: `Производство: этап → ${body.prod_stage || '—'}`, user_name: me().name, created_at: dt(now) });
+        }
+        for (const k of ['client_id', 'manager_id', 'title', 'status', 'product_type', 'price', 'cost', 'quantity', 'due_date', 'notes', 'prod_stage']) {
+          if (body[k] != null) o[k] = body[k];
+        }
+        if (body.params) o.params_json = JSON.stringify(body.params);
+        if (body.calc) o.calc_json = JSON.stringify(body.calc);
+        o.client_name = (CLIENTS.find((c) => c.id === o.client_id) || {}).name || '';
+        o.manager_name = (USERS.find((x) => x.id === o.manager_id) || {}).name || '';
+        o.updated_at = dt(now);
+        return J({ ok: true });
+      }
+      if (method === 'DELETE') return J({ error: 'В демо-версии удаление отключено' }, 400);
+    }
+
+    if (path === '/api/tasks' && method === 'GET') {
+      let list = TASKS.slice();
+      if (qs.get('mine') === '1') list = list.filter((t) => t.user_id === me().id);
+      if (qs.get('open') === '1') list = list.filter((t) => !t.done);
+      return J(list.map(taskView));
+    }
+    if (path === '/api/tasks' && method === 'POST') {
+      const t = { id: nextTaskId++, order_id: body.order_id || null, user_id: body.user_id || me().id, text: body.text, due_date: body.due_date || '', done: 0 };
+      TASKS.push(t); return J({ id: t.id });
+    }
+    if (path.startsWith('/api/tasks/')) {
+      const id = Number(path.split('/')[3]);
+      const t = TASKS.find((x) => x.id === id);
+      if (method === 'PUT' && t) { for (const k of ['text', 'due_date', 'done', 'user_id']) if (body[k] != null) t[k] = body[k]; }
+      if (method === 'DELETE') TASKS = TASKS.filter((x) => x.id !== id);
+      return J({ ok: true });
+    }
+
+    if (path === '/api/pricing/schema') {
+      return J({ types: Object.entries(engines).map(([key, e]) => ({ key, label: e.label, fields: e.schema(cfg) })) });
+    }
+    if (path === '/api/pricing/config' && method === 'GET') return J(cfg);
+    if (path === '/api/pricing/config' && method === 'PUT') return J({ ok: true });
+    if (path === '/api/pricing/config/reset') return J({ ok: true });
+
+    if (path.startsWith('/api/calc/')) {
+      const type = path.split('/')[3];
+      try { return J(engines[type].calculate(body, cfg)); }
+      catch (e) { return J({ error: e.message }, 400); }
+    }
+
+    if (path === '/api/analytics') {
+      const from = qs.get('from') || '2000-01-01', to = (qs.get('to') || '2100-01-01') + ' 23:59:59';
+      const list = ORDERS.filter((o) => o.status !== 'cancelled' && o.created_at >= from && o.created_at <= to);
+      const group = (keyFn, labelFn) => {
+        const m = new Map();
+        for (const o of list) {
+          const k = keyFn(o);
+          if (!m.has(k)) m.set(k, { n: 0, revenue: 0, margin: 0 });
+          const g = m.get(k); g.n++; g.revenue += o.price; g.margin += o.price - o.cost;
+        }
+        return [...m.entries()].map(([k, v]) => ({ ...labelFn(k), ...v }));
+      };
+      return J({
+        totals: { orders: list.length, revenue: list.reduce((s, o) => s + o.price, 0), cost: list.reduce((s, o) => s + o.cost, 0) },
+        byStatus: group((o) => o.status, (k) => ({ status: k })),
+        byManager: group((o) => o.manager_name, (k) => ({ name: k })).sort((a, b) => b.revenue - a.revenue),
+        byType: group((o) => o.product_type, (k) => ({ product_type: k })).sort((a, b) => b.revenue - a.revenue),
+        byMonth: group((o) => o.created_at.slice(0, 7), (k) => ({ month: k })).sort((a, b) => a.month < b.month ? -1 : 1),
+      });
+    }
+
+    return J({ error: 'Демо: не реализовано' }, 404);
+  };
+
+  /* ---------- плашка демо-режима (сверху) ---------- */
+  document.addEventListener('DOMContentLoaded', () => {
+    const b = document.createElement('div');
+    b.id = 'demo-banner';
+    b.innerHTML = '⚠️ <b>ДЕМОНСТРАЦИОННАЯ ВЕРСИЯ.</b> Все данные, клиенты и цены — условные, ' +
+      'заполнены по умолчанию для примера и не являются реальным прайсом типографии «Радуга». ' +
+      'Вход — любой логин и пароль.';
+    b.style.cssText = 'background:#DFE690;color:#111;text-align:center;' +
+      'font:500 12.5px -apple-system,Segoe UI,Roboto,sans-serif;padding:7px 12px;letter-spacing:.02em;' +
+      'border-bottom:1px solid #c9d167';
+    document.body.prepend(b);
+    const style = document.createElement('style');
+    style.textContent = '#sidebar { height: auto !important; min-height: 100vh; } ' +
+      '@media print { #demo-banner { display: none !important; } }';
+    document.head.appendChild(style);
+  });
+})();
