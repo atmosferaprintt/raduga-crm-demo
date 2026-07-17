@@ -34,6 +34,20 @@ function calcResultHTML(calc) {
       </table></div>`;
   }
 
+  if (calc.extraOps && calc.extraOps.length) {
+    html += `
+      <h3 style="margin:16px 0 10px">Дополнительные операции</h3>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Операция</th><th class="num">Кол-во</th><th class="num">Сумма</th></tr></thead>
+        <tbody>
+          ${calc.extraOps.map((o) => `
+            <tr><td>${esc(o.name)}${o.kind === 'material' ? ' <span class="muted small">(материал)</span>' : ''}</td>
+                <td class="num">${fmtNum(o.qty)} ${esc(o.unit || '')}</td>
+                <td class="num">${fmtMoney(o.sum)}</td></tr>`).join('')}
+        </tbody>
+      </table></div>`;
+  }
+
   if (calc.variants && Object.keys(calc.variants).length) {
     const keys = Object.keys(calc.variants);
     const rows = [['priceTotal', 'Цена за тираж'], ['pricePerItem', 'За экземпляр'], ['cost', 'Себестоимость']]
@@ -76,12 +90,39 @@ function calcResultHTML(calc) {
         </tbody>
       </table></div>`;
   }
+
+  // Обоснование: пошаговая трассировка расчёта с формулами и источниками цен
+  if (calc.trace && calc.trace.length) {
+    const groups = [];
+    for (const t of calc.trace) {
+      let g = groups.find((x) => x.name === t.g);
+      if (!g) { g = { name: t.g, rows: [] }; groups.push(g); }
+      g.rows.push(t);
+    }
+    html += `
+      <details class="trace-box">
+        <summary>Обоснование расчёта: как получены эти цифры (${calc.trace.length} шагов)</summary>
+        ${groups.map((g) => `
+          <div class="trace-group">
+            <div class="trace-group-title">${esc(g.name)}</div>
+            <table class="tbl trace-tbl"><tbody>
+              ${g.rows.map((t) => `
+                <tr>
+                  <td class="trace-l">${esc(t.l)}</td>
+                  <td class="trace-how">${esc(t.how || '')}
+                    ${t.src ? `<div class="trace-src">${esc(t.src)}</div>` : ''}</td>
+                  <td class="num">${typeof t.v === 'number' ? fmtNum(t.v) : esc(t.v ?? '')}${t.unit ? ' ' + esc(t.unit) : ''}</td>
+                </tr>`).join('')}
+            </tbody></table>
+          </div>`).join('')}
+      </details>`;
+  }
   return html;
 }
 
 /* Параметры заказа → читабельный список по schema */
 function paramsListHTML(type, params) {
-  const entries = Object.entries(params || {});
+  const entries = Object.entries(params || {}).filter(([k]) => k !== 'extraOps');
   if (!entries.length) return '<div class="muted">Нет параметров</div>';
   const t = state.schema && state.schema.types.find((x) => x.key === type);
   const rows = entries.map(([k, v]) => {
@@ -101,6 +142,7 @@ function paramsListHTML(type, params) {
 views.calc = async function (box, arg, query) {
   const schema = await loadSchema();
   const cfg = await api('/api/pricing/config');
+  const extraOpsCatalog = await api('/api/extra-ops').catch(() => []);
   await Promise.all([loadClients(), loadUsers()]);
   if (!schema.types.length) { box.innerHTML = '<div class="form-error">Схема калькуляторов пуста</div>'; return; }
 
@@ -130,6 +172,7 @@ views.calc = async function (box, arg, query) {
       <div class="panel panel-pad">
         <h3>Параметры</h3>
         <form id="calc-form" class="calc-form"></form>
+        <div id="extra-ops-box"></div>
         <div class="calc-actions">
           <button class="btn btn-primary" id="btn-calc">Рассчитать</button>
         </div>
@@ -239,6 +282,47 @@ views.calc = async function (box, arg, query) {
     return out;
   }
 
+  /* --- дополнительные операции (конструктор в настройках) --- */
+  const opsBox = $('#extra-ops-box', box);
+
+  function opsForType() {
+    return (extraOpsCatalog || []).filter((o) =>
+      !Array.isArray(o.calcs) || !o.calcs.length || o.calcs.includes(type));
+  }
+
+  function renderExtraOps() {
+    const ops = opsForType();
+    if (!ops.length) { opsBox.innerHTML = ''; return; }
+    const preset = new Map();
+    if (order && order.product_type === type && orderParams && Array.isArray(orderParams.extraOps)) {
+      for (const p of orderParams.extraOps) preset.set(String(p.id), p.qty);
+    }
+    const TAR = { perItem: 'за экз.', fixed: 'за услугу' };
+    opsBox.innerHTML = `
+      <div class="calc-group-title">Дополнительные операции</div>
+      ${ops.map((o) => {
+        const on = preset.has(String(o.id));
+        const qty = preset.get(String(o.id)) || 1;
+        return `<label class="check-fld extra-op" data-op="${esc(o.id)}">
+          <input type="checkbox" data-op-check ${on ? 'checked' : ''}>
+          <span>${esc(o.name)} <span class="unit">(${fmtNum(o.price)} у.е.
+            ${o.tariff === 'perUnit' ? 'за ' + esc(o.unit || 'шт.') : TAR[o.tariff] || ''}${o.kind === 'material' ? ', материал' : ''})</span></span>
+          ${o.tariff === 'perUnit' ? `<input type="number" class="op-qty" min="0" step="any"
+            value="${esc(qty)}" title="Количество: ${esc(o.unit || 'шт.')}">` : ''}
+        </label>`;
+      }).join('')}`;
+  }
+
+  function collectExtraOps() {
+    const out = [];
+    $$('.extra-op', opsBox).forEach((row) => {
+      if (!$('[data-op-check]', row).checked) return;
+      const qtyEl = $('.op-qty', row);
+      out.push({ id: row.dataset.op, qty: qtyEl ? Number(qtyEl.value) || 0 : 1 });
+    });
+    return out;
+  }
+
   function setSaveEnabled(on) {
     $('#btn-save-new', box).disabled = !on;
     $('#btn-kp-calc', box).disabled = !on;
@@ -248,6 +332,8 @@ views.calc = async function (box, arg, query) {
 
   async function calculate() {
     const params = collectParams();
+    const pickedOps = collectExtraOps();
+    if (pickedOps.length) params.extraOps = pickedOps;
     const btn = $('#btn-calc', box);
     btn.disabled = true;
     try {
@@ -363,6 +449,7 @@ views.calc = async function (box, arg, query) {
     setSaveEnabled(false);
     resultBox.innerHTML = '<div class="muted">Заполните параметры и нажмите «Рассчитать»</div>';
     renderForm();
+    renderExtraOps();
   }));
 
   $('#btn-calc', box).addEventListener('click', (e) => { e.preventDefault(); calculate(); });
@@ -381,6 +468,7 @@ views.calc = async function (box, arg, query) {
   });
 
   renderForm();
+  renderExtraOps();
 };
 
 /* ================= КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ (печать) ================= */
@@ -405,7 +493,7 @@ function printKP(order, calc, params) {
   const dateStr = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 
   const t = state.schema && state.schema.types.find((x) => x.key === order.product_type);
-  const paramRows = Object.entries(params || {}).map(([k, v]) => {
+  const paramRows = Object.entries(params || {}).filter(([k]) => k !== 'extraOps').map(([k, v]) => {
     const f = t && t.fields.find((x) => x.key === k);
     const label = f ? f.label : k;
     let val;
@@ -419,7 +507,7 @@ function printKP(order, calc, params) {
     <div class="kp">
       <div class="kp-head">
         <div>
-          <img src="./logo.webp" alt="raduga">
+          <img src="/logo.webp" alt="raduga">
           <div><b>${esc(COMPANY.brand)}</b></div>
           <div class="kp-slogan">${esc(COMPANY.slogan)}</div>
         </div>
@@ -459,6 +547,12 @@ function printKP(order, calc, params) {
           </tr>
         </tbody>
       </table>
+
+      ${calc.extraOps && calc.extraOps.length ? `
+        <div class="kp-block"><b class="kp-cap">В стоимость включены дополнительные операции</b>
+          <div class="kp-params">${calc.extraOps.map((o) =>
+            `<div><span class="pk">${esc(o.name)} (${fmtNum(o.qty)} ${esc(o.unit || '')}):</span> ${fmtMoney(o.sum)}</div>`).join('')}</div>
+        </div>` : ''}
 
       <div class="kp-total">Итого: ${fmtMoney(total)}</div>
       ${order.due_date ? `<div>Ориентировочный срок готовности: ${fmtDate(order.due_date)}</div>` : ''}
@@ -515,7 +609,7 @@ function printTechTask(order, calc, params) {
     <div class="kp tz">
       <div class="kp-head">
         <div>
-          <img src="./logo.webp" alt="raduga">
+          <img src="/logo.webp" alt="raduga">
         </div>
         <div class="kp-requisites">
           <b>ТЕХНИЧЕСКОЕ ЗАДАНИЕ</b><br>
@@ -547,6 +641,15 @@ function printTechTask(order, calc, params) {
             ${calc.materials.map((mt) => `
               <tr><td>${esc(mt.name)}</td><td>${fmtNum(Math.ceil(mt.qty * 100) / 100)}</td>
                   <td>${esc(mt.unit)}</td><td>${esc(mt.what || '')}</td></tr>`).join('')}
+          </table>
+        </div>` : ''}
+
+      ${calc.extraOps && calc.extraOps.length ? `
+        <div class="kp-block"><b class="kp-cap">Дополнительные операции</b>
+          <table class="tz-stages">
+            <tr><th>Операция</th><th>Кол-во</th><th>Ед.</th></tr>
+            ${calc.extraOps.map((o) => `
+              <tr><td>${esc(o.name)}</td><td>${fmtNum(o.qty)}</td><td>${esc(o.unit || '')}</td></tr>`).join('')}
           </table>
         </div>` : ''}
 

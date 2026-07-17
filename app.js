@@ -48,6 +48,19 @@ function prodStageLabel(key) { const s = PROD_STAGES.find((x) => x.key === key);
 
 function statusBadge(key) { return `<span class="badge st-${esc(key)}">${esc(statusLabel(key))}</span>`; }
 
+const PURCH_STATUSES = [
+  { key: 'draft', label: 'Черновик', badge: 'st-calc' },
+  { key: 'ordered', label: 'Заказано', badge: 'st-approval' },
+  { key: 'partial', label: 'Частично получено', badge: 'st-production' },
+  { key: 'received', label: 'Получено', badge: 'st-ready' },
+  { key: 'cancelled', label: 'Отменена', badge: 'st-cancelled' },
+];
+function purchStatusLabel(key) { return (PURCH_STATUSES.find((s) => s.key === key) || {}).label || key; }
+function purchStatusBadge(key) {
+  const s = PURCH_STATUSES.find((x) => x.key === key);
+  return `<span class="badge ${s ? s.badge : ''}">${esc(s ? s.label : key)}</span>`;
+}
+
 // Русские названия видов продукции (fallback, если schema отдаёт технический ключ)
 const TYPE_NAMES = {
   books7: 'Книги 7БЦ',
@@ -91,6 +104,7 @@ const state = {
   users: null,
   clients: null,
   schema: null,
+  suppliers: null,
 };
 
 async function loadUsers(force) {
@@ -104,6 +118,10 @@ async function loadClients(force) {
 async function loadSchema(force) {
   if (!state.schema || force) state.schema = await api('/api/pricing/schema');
   return state.schema;
+}
+async function loadSuppliers(force) {
+  if (!state.suppliers || force) state.suppliers = await api('/api/suppliers');
+  return state.suppliers;
 }
 
 /* ---------- Тосты ---------- */
@@ -194,6 +212,7 @@ function navigate(hash) { location.hash = hash; }
 
 const PAGE_TITLES = {
   orders: 'Заказы', order: 'Заказ', calc: 'Калькулятор', production: 'Производство', stock: 'Склад',
+  purchases: 'Закупки', purchase: 'Закупка',
   clients: 'Клиенты', client: 'Клиент', tasks: 'Задачи', analytics: 'Аналитика', settings: 'Настройки',
 };
 
@@ -207,6 +226,7 @@ async function renderRoute() {
   let viewName = name;
   if (name === 'orders' && arg) viewName = 'order';
   if (name === 'clients' && arg) viewName = 'client';
+  if (name === 'purchases' && arg) viewName = 'purchase';
   if (name === 'settings' && state.user.role !== 'admin') { navigate('#/orders'); return; }
   const view = window.views[viewName];
   if (!view) { navigate('#/orders'); return; }
@@ -295,7 +315,7 @@ async function boot() {
     try {
       const { user } = await api('/api/login', { method: 'POST', body: { login: f.get('login'), password: f.get('password') } });
       state.user = user;
-      state.users = state.clients = state.schema = null;
+      state.users = state.clients = state.schema = state.suppliers = null;
       e.target.reset();
       showApp();
     } catch (err) {

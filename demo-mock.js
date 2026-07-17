@@ -26,6 +26,56 @@
   for (const k of moneySubtrees) if (cfg[k]) cfg[k] = scaleTree(cfg[k], k);
 
   const engines = window.DEMO_PRICING.engines;
+  const pcommon = window.DEMO_PRICING.common;
+  const pcustom = window.DEMO_PRICING.custom;
+
+  /* ---------- доп. операции (конструктор, демо) ---------- */
+  let EXTRA_OPS = [
+    { id: 'op1', name: 'Упаковка в термоплёнку', calcs: null, kind: 'work', tariff: 'perItem', price: 0.1, unit: '' },
+    { id: 'op2', name: 'Доставка по городу', calcs: null, kind: 'work', tariff: 'fixed', price: 12, unit: '' },
+  ];
+
+  /* ---------- кастомные калькуляторы (демо-примеры) ---------- */
+  let CUSTOM_CALCS = [
+    {
+      key: 'c_vizitki', label: 'Визитки', mode: 'simple', discount: true,
+      fields: [{ key: 'p1', label: 'Резов на тираж', type: 'number', unit: 'резов', default: 10 }],
+      ops: [
+        { name: 'Цифровая печать', kind: 'work', tariff: 'perItem', price: 0.05 },
+        { name: 'Макет (дизайн)', kind: 'work', tariff: 'fixed', price: 10 },
+        { name: 'Резка', kind: 'work', tariff: 'field', qtyField: 'p1', price: 0.5 },
+        { name: 'Бумага дизайнерская', kind: 'material', tariff: 'perItem', price: 0.02 },
+      ],
+    },
+    {
+      key: 'c_listovki', label: 'Листовки (формулы)', mode: 'formula', discount: true,
+      fields: [{ key: 'naliste', label: 'Изделий на листе', type: 'number', default: 8 }],
+      vars: [
+        { key: 'listy', label: 'Листов печати', expr: 'ОКРВВЕРХ(tiraj / naliste)' },
+        { key: 'pechat', label: 'Печать, у.е.', expr: '10 + listy * 0,45' },
+      ],
+      outMaterials: 'listy * 0,028', outWorks: 'pechat',
+    },
+  ];
+
+  function customDef(type) { return CUSTOM_CALCS.find((c) => c.key === type); }
+
+  function applyDemoExtraOps(result, picked, type) {
+    if (!result || !result.ok || !Array.isArray(picked) || !picked.length) return result;
+    const resolved = [];
+    for (const p of picked) {
+      const op = EXTRA_OPS.find((o) => String(o.id) === String(p && p.id));
+      if (!op) continue;
+      if (Array.isArray(op.calcs) && op.calcs.length && !op.calcs.includes(type)) continue;
+      const qty = op.tariff === 'perItem' ? (Number(result.quantity) || 0)
+        : op.tariff === 'fixed' ? 1
+        : Math.max(0, Number(p.qty) || 0);
+      const unit = op.tariff === 'perItem' ? 'экз.' : op.tariff === 'fixed' ? 'услуга' : (op.unit || 'шт.');
+      resolved.push({ name: op.name, kind: op.kind, price: op.price, unit, qty });
+    }
+    return pcommon.applyExtraOps(result, resolved, cfg);
+  }
+
 
   /* ---------- вымышленные данные ---------- */
   const USERS = [
@@ -138,6 +188,47 @@
   ];
   let nextMoveId = 5, nextMaterialId = MATERIALS.length + 1;
 
+  /* ---------- поставщики и закупки (демо) ---------- */
+  let SUPPLIERS = [
+    { id: 1, name: 'Бумснаб (демо)', contact_person: 'Виктор', phone: '+7 (900) 222-33-44', email: 'sale@bumsnab-demo.ru', inn: '7700000001', terms: 'Оплата по счёту, доставка 3 дня', notes: '', active: 1 },
+    { id: 2, name: 'ПереплётМатериалы (демо)', contact_person: 'Ольга', phone: '+7 (900) 555-66-77', email: 'opt@pm-demo.ru', inn: '7700000002', terms: 'Предоплата 50%', notes: 'Эфалин, балакрон', active: 1 },
+  ];
+  let PURCHASES = [
+    {
+      id: 1, number: 'ЗК-2026-0011', supplier_id: 1, user_id: 1, status: 'received',
+      expected_date: iso(now.getTime() - 6 * day), notes: 'Демо-закупка',
+      created_at: dt(now.getTime() - 12 * day), updated_at: dt(now.getTime() - 5 * day),
+      items: [
+        { id: 1, purchase_id: 1, material_id: 2, qty: 15000, received_qty: 15000, price: 3.1, notes: '', material_name: 'Офсет 80', material_unit: 'лист А3' },
+        { id: 2, purchase_id: 1, material_id: 9, qty: 4000, received_qty: 4000, price: 5.4, notes: '', material_name: 'Мелов 150', material_unit: 'лист А3' },
+      ],
+      log: [
+        { event: 'Закупка создана (ЗК-2026-0011)', user_name: 'Демо-руководитель', created_at: dt(now.getTime() - 12 * day) },
+        { event: 'Статус: Черновик → Заказано', user_name: 'Демо-руководитель', created_at: dt(now.getTime() - 11 * day) },
+        { event: 'Приёмка: всё получено, оприходовано на склад', user_name: 'Иванова А.', created_at: dt(now.getTime() - 5 * day) },
+      ],
+    },
+    {
+      id: 2, number: 'ЗК-2026-0012', supplier_id: 2, user_id: 1, status: 'ordered',
+      expected_date: iso(now.getTime() + 4 * day), notes: '',
+      created_at: dt(now.getTime() - 3 * day), updated_at: dt(now.getTime() - 3 * day),
+      items: [
+        { id: 3, purchase_id: 2, material_id: 15, qty: 80, received_qty: 0, price: 96, notes: '', material_name: 'Эфалин', material_unit: 'лист А1' },
+        { id: 4, purchase_id: 2, material_id: 16, qty: 30, received_qty: 0, price: 410, notes: '', material_name: 'Балакрон', material_unit: 'пог. м' },
+      ],
+      log: [
+        { event: 'Закупка создана (ЗК-2026-0012)', user_name: 'Демо-руководитель', created_at: dt(now.getTime() - 3 * day) },
+        { event: 'Статус: Черновик → Заказано', user_name: 'Демо-руководитель', created_at: dt(now.getTime() - 3 * day) },
+      ],
+    },
+  ];
+  let BATCHES = [
+    { id: 1, material_id: 2, qty: 15000, qty_left: 12500, unit_price: 3.1, batch_no: 'П-0911', supplier_id: 1, purchase_id: 1, received_at: dt(now.getTime() - 5 * day), notes: '', supplier_name: 'Бумснаб (демо)', purchase_number: 'ЗК-2026-0011', p_id: 1 },
+    { id: 2, material_id: 9, qty: 4000, qty_left: 3800, unit_price: 5.4, batch_no: 'П-0912', supplier_id: 1, purchase_id: 1, received_at: dt(now.getTime() - 5 * day), notes: '', supplier_name: 'Бумснаб (демо)', purchase_number: 'ЗК-2026-0011', p_id: 1 },
+    { id: 3, material_id: 15, qty: 120, qty_left: 120, unit_price: 92, batch_no: '', supplier_id: 2, purchase_id: null, received_at: dt(now.getTime() - 40 * day), notes: 'Начальный остаток', supplier_name: 'ПереплётМатериалы (демо)', purchase_number: '', p_id: null },
+  ];
+  let nextSupplierId = 3;
+
   /* ---------- интеграции (демо) ---------- */
   const BITRIX = { webhookUrl: 'https://raduga-demo.bitrix24.ru/rest/1/demo00000000/', inKey: 'demo1234567890ключ' };
   let nextDealId = 421;
@@ -205,10 +296,16 @@
 
     // склад
     if (path === '/api/stock' && method === 'GET') {
-      return J(MATERIALS.map((m) => ({
-        ...m,
-        last_move: (MOVES.find((mv) => mv.material_id === m.id) || {}).created_at || null,
-      })));
+      return J(MATERIALS.map((m) => {
+        const bs = BATCHES.filter((b) => b.material_id === m.id);
+        return {
+          ...m,
+          last_move: (MOVES.find((mv) => mv.material_id === m.id) || {}).created_at || null,
+          batches_active: bs.filter((b) => b.qty_left > 0).length,
+          stock_value: bs.reduce((s, b) => s + b.qty_left * b.unit_price, 0),
+          last_price: (bs.find((b) => b.unit_price > 0) || {}).unit_price || null,
+        };
+      }));
     }
     if (path === '/api/stock' && method === 'POST') {
       if (MATERIALS.some((m) => m.name === body.name)) return J({ error: 'Материал с таким названием уже есть' }, 400);
@@ -242,6 +339,58 @@
       if (method === 'PUT' && m) { for (const k of ['name', 'unit', 'min_qty', 'notes']) if (body[k] != null) m[k] = k === 'min_qty' ? +body[k] : body[k]; return J({ ok: true }); }
       if (method === 'DELETE') return J({ error: 'В демо-версии удаление отключено' }, 400);
       return J({ ok: true });
+    }
+
+    // поставщики и закупки (демо: просмотр + добавление поставщика)
+    if (path === '/api/suppliers' && method === 'GET') {
+      return J(SUPPLIERS.map((s) => ({
+        ...s,
+        purchases_count: PURCHASES.filter((p) => p.supplier_id === s.id && !['draft', 'cancelled'].includes(p.status)).length,
+        purchases_total: PURCHASES.filter((p) => p.supplier_id === s.id && !['draft', 'cancelled'].includes(p.status))
+          .reduce((sum, p) => sum + p.items.reduce((x, i) => x + (p.status === 'ordered' ? i.qty : i.received_qty) * i.price, 0), 0),
+      })));
+    }
+    if (path === '/api/suppliers' && method === 'POST') {
+      const s = { id: nextSupplierId++, name: body.name || 'Поставщик', contact_person: body.contact_person || '', phone: body.phone || '', email: body.email || '', inn: body.inn || '', terms: body.terms || '', notes: body.notes || '', active: 1 };
+      SUPPLIERS.push(s); return J({ id: s.id });
+    }
+    if (path.startsWith('/api/suppliers/')) {
+      const id = Number(path.split('/')[3]);
+      const s = SUPPLIERS.find((x) => x.id === id);
+      if (method === 'PUT' && s) { Object.assign(s, body, { active: body.active != null ? (body.active ? 1 : 0) : s.active }); return J({ ok: true }); }
+      if (method === 'DELETE') return J({ error: 'В демо-версии удаление отключено' }, 400);
+      return J({ ok: true });
+    }
+    if (path === '/api/purchases' && method === 'GET') {
+      let list = PURCHASES.slice();
+      if (qs.get('status')) list = list.filter((p) => p.status === qs.get('status'));
+      if (qs.get('supplier_id')) list = list.filter((p) => String(p.supplier_id) === qs.get('supplier_id'));
+      return J(list.map((p) => ({
+        ...p,
+        supplier_name: (SUPPLIERS.find((s) => s.id === p.supplier_id) || {}).name || '',
+        user_name: 'Демо-руководитель',
+        items_count: p.items.length,
+        total: p.items.reduce((s, i) => s + i.qty * i.price, 0),
+      })));
+    }
+    if (path === '/api/purchases' && method === 'POST') return J({ error: 'В демо-версии закупки только для просмотра' }, 400);
+    if (/^\/api\/purchases\/\d+\/receive$/.test(path)) return J({ error: 'В демо-версии приёмка отключена' }, 400);
+    if (path.startsWith('/api/purchases/')) {
+      const id = Number(path.split('/')[3]);
+      const p = PURCHASES.find((x) => x.id === id);
+      if (!p) return J({ error: 'Закупка не найдена' }, 404);
+      if (method === 'GET') {
+        const s = SUPPLIERS.find((x) => x.id === p.supplier_id) || {};
+        return J({
+          ...p, supplier_name: s.name || '', supplier_contact: s.contact_person || '', supplier_phone: s.phone || '',
+          supplier_email: s.email || '', supplier_inn: s.inn || '', supplier_terms: s.terms || '', user_name: 'Демо-руководитель',
+        });
+      }
+      return J({ error: 'В демо-версии закупки только для просмотра' }, 400);
+    }
+    if (/^\/api\/stock\/\d+\/batches$/.test(path)) {
+      const id = Number(path.split('/')[3]);
+      return J(BATCHES.filter((b) => b.material_id === id));
     }
 
     // интеграции (демо: Битрикс24 «подключён», сделки создаются понарошку)
@@ -334,16 +483,50 @@
     }
 
     if (path === '/api/pricing/schema') {
-      return J({ types: Object.entries(engines).map(([key, e]) => ({ key, label: e.label, fields: e.schema(cfg) })) });
+      return J({ types: [
+        ...Object.entries(engines).map(([key, e]) => ({ key, label: e.label, fields: e.schema(cfg) })),
+        ...CUSTOM_CALCS.map((def) => ({ key: def.key, label: def.label, fields: pcustom.fieldsSchema(def, cfg), custom: true })),
+      ] });
     }
     if (path === '/api/pricing/config' && method === 'GET') return J(cfg);
     if (path === '/api/pricing/config' && method === 'PUT') return J({ ok: true });
     if (path === '/api/pricing/config/reset') return J({ ok: true });
 
+    // доп. операции (конструктор)
+    if (path === '/api/extra-ops' && method === 'GET') return J(EXTRA_OPS);
+    if (path === '/api/extra-ops' && method === 'PUT') {
+      if (!Array.isArray(body)) return J({ error: 'Ожидается массив операций' }, 400);
+      EXTRA_OPS = body.map((o, i) => ({ ...o, id: String(o.id || 'op' + (100 + i)) }));
+      return J({ ok: true });
+    }
+
+    // конструктор калькуляторов
+    if (path === '/api/custom-calcs' && method === 'GET') return J(CUSTOM_CALCS);
+    if (path === '/api/custom-calcs' && method === 'PUT') {
+      if (!Array.isArray(body)) return J({ error: 'Ожидается массив калькуляторов' }, 400);
+      for (const def of body) {
+        def.key = String(def.key || 'c' + Math.random().toString(36).slice(2, 8));
+        const err = pcustom.validateDef(def);
+        if (err) return J({ error: `«${def.label || def.key}»: ${err}` }, 400);
+      }
+      CUSTOM_CALCS = body;
+      return J({ ok: true });
+    }
+    if (path === '/api/custom-calcs/test' && method === 'POST') {
+      try {
+        const err = pcustom.validateDef(body.def || {});
+        if (err) return J({ error: err }, 400);
+        return J(pcustom.calculate(body.def, body.params || {}, cfg));
+      } catch (e) { return J({ error: e.message }, 400); }
+    }
+
     if (path.startsWith('/api/calc/')) {
       const type = path.split('/')[3];
-      try { return J(engines[type].calculate(body, cfg)); }
-      catch (e) { return J({ error: e.message }, 400); }
+      try {
+        const def = customDef(type);
+        const result = def ? pcustom.calculate(def, body, cfg) : engines[type].calculate(body, cfg);
+        return J(applyDemoExtraOps(result, body.extraOps, type));
+      } catch (e) { return J({ error: e.message }, 400); }
     }
 
     if (path === '/api/analytics') {
