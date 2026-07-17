@@ -2038,12 +2038,22 @@ views.settings = async function (box, arg, query) {
     const p = esc(JSON.stringify(path));
     if (typeof value === 'number') return `<input type="number" step="any" value="${value}" data-path="${p}" data-type="number">`;
     if (typeof value === 'boolean') return `<input type="checkbox" ${value ? 'checked' : ''} data-path="${p}" data-type="boolean">`;
+    if (Array.isArray(value)) return `<input type="text" value="${esc(value.join(', '))}" data-path="${p}" data-type="strlist" title="значения через запятую">`;
     return `<input type="text" value="${esc(value)}" data-path="${p}" data-type="string">`;
+  }
+
+  const isStrArray = (v) => Array.isArray(v) && v.every((x) => typeof x !== 'object');
+  const isFlat = (v) => Object.values(v).every((x) => !isObj(x) || isStrArray(x));
+
+  // Подпись строки в матрице: для массивов (каталог пружин) — имя элемента или номер
+  function rowLabel(obj, k, v) {
+    if (Array.isArray(obj)) return (v && typeof v.name === 'string' && v.name) || '№ ' + (Number(k) + 1);
+    return cfgLabel(k);
   }
 
   function cfgRender(obj, path, level) {
     const prims = [], objs = [];
-    for (const [k, v] of Object.entries(obj)) (isObj(v) ? objs : prims).push([k, v]);
+    for (const [k, v] of Object.entries(obj)) ((isObj(v) && !isStrArray(v)) ? objs : prims).push([k, v]);
 
     let html = '';
     if (prims.length) {
@@ -2051,19 +2061,32 @@ views.settings = async function (box, arg, query) {
         `<tr><td class="k">${esc(cfgLabel(k))} ${hintBtn(path.concat(k))}</td><td>${cfgInput(v, path.concat(k))}</td></tr>`).join('')}</table>`;
     }
 
-    // если все вложенные объекты «плоские» — рисуем матрицей: строки-ключи, колонки-поля
-    const flatChildren = objs.length > 1 && objs.every(([, v]) => Object.values(v).every((x) => !isObj(x)));
-    if (flatChildren) {
-      const cols = [...new Set(objs.flatMap(([, v]) => Object.keys(v)))];
+    const flatObjs = objs.filter(([, v]) => isFlat(v));
+    const deepObjs = objs.filter(([, v]) => !isFlat(v));
+
+    // Матрица (строки-ключи × колонки-поля) — только когда колонки у всех строк ОДИНАКОВЫЕ:
+    // бумага (a2/a3/толщина), операции (офсет/цифра), каталог пружин и т.п.
+    const refKeys = flatObjs.length > 1 ? JSON.stringify(Object.keys(flatObjs[0][1])) : null;
+    const uniform = refKeys && flatObjs.every(([, v]) => JSON.stringify(Object.keys(v)) === refKeys) && !deepObjs.length;
+
+    if (uniform) {
+      const cols = Object.keys(flatObjs[0][1]);
       html += `<table class="cfg-table">
         <tr><td class="k"></td>${cols.map((c) => `<td class="k">${esc(cfgLabel(c))} ${hintBtn(path.concat('*', c))}</td>`).join('')}</tr>
-        ${objs.map(([k, v]) => `<tr><td class="k">${esc(cfgLabel(k))}</td>${cols.map((c) =>
+        ${flatObjs.map(([k, v]) => `<tr><td class="k">${esc(rowLabel(obj, k, v))}</td>${cols.map((c) =>
           `<td>${c in v ? cfgInput(v[c], path.concat(k, c)) : ''}</td>`).join('')}</tr>`).join('')}
       </table>`;
-    } else {
-      for (const [k, v] of objs) {
-        html += `<div class="cfg-sub"><h4 style="font-size:12.5px;margin-bottom:6px">${esc(cfgLabel(k))} ${hintBtn(path.concat(k))}</h4>${cfgRender(v, path.concat(k), level + 1)}</div>`;
-      }
+    } else if (flatObjs.length) {
+      // Разнородные плоские блоки — компактной строкой: подпись + пары «колонка: значение»
+      html += `<table class="cfg-table">${flatObjs.map(([k, v]) => `
+        <tr><td class="k">${esc(cfgLabel(k))} ${hintBtn(path.concat(k))}</td>
+          <td class="pairs">${Object.entries(v).map(([ck, cv]) =>
+            `<span class="pair"><span class="pl">${esc(cfgLabel(ck))}</span>${cfgInput(cv, path.concat(k, ck))}</span>`).join('')}</td></tr>`).join('')}
+      </table>`;
+    }
+
+    for (const [k, v] of deepObjs) {
+      html += `<div class="cfg-sub"><h4 style="font-size:12.5px;margin-bottom:6px">${esc(rowLabel(obj, k, v))} ${hintBtn(path.concat(k))}</h4>${cfgRender(v, path.concat(k), level + 1)}</div>`;
     }
     return html;
   }
@@ -2121,6 +2144,7 @@ views.settings = async function (box, arg, query) {
           val = parseFloat(String(inp.value).replace(',', '.'));
           if (!isFinite(val)) { bad = path.join(' → '); return; }
         } else if (inp.dataset.type === 'boolean') val = inp.checked;
+        else if (inp.dataset.type === 'strlist') val = inp.value.split(',').map((s) => s.trim()).filter(Boolean);
         else val = inp.value;
         let t = draft;
         for (let i = 0; i < path.length - 1; i++) t = t[path[i]];
