@@ -146,6 +146,26 @@ views.calc = async function (box, arg, query) {
   await Promise.all([loadClients(), loadUsers()]);
   if (!schema.types.length) { box.innerHTML = '<div class="form-error">Схема калькуляторов пуста</div>'; return; }
 
+  // Материалы со склада без цен: помечаем прямо в выпадашках
+  const newMats = (() => {
+    const seen = new Map();
+    const dicts = [
+      [cfg.blockPapers, (v) => (v.a2 || 0) + (v.a3 || 0)],
+      [cfg.coverPapers, (v) => v.a3 || 0],
+      [cfg.bindingMaterials, (v) => v.price || 0],
+      [cfg.plotter && cfg.plotter.materials, (v) => v.price || 0],
+      [cfg.notebooks && cfg.notebooks.papers, (v) => v.a3 || 0],
+      [cfg.sheetPapers && cfg.sheetPapers.fixed, (v) => Number(v) || 0],
+    ];
+    for (const [dict, priceOf] of dicts) {
+      if (!dict) continue;
+      for (const [name, v] of Object.entries(dict)) {
+        seen.set(name, (seen.get(name) || false) || priceOf(v) > 0);
+      }
+    }
+    return new Set([...seen.entries()].filter(([, p]) => !p).map(([n]) => n));
+  })();
+
   const orderId = query.get('order');
   let order = null, orderParams = null;
   if (orderId) {
@@ -205,7 +225,7 @@ views.calc = async function (box, arg, query) {
     }
     if (f.type === 'select') {
       const opts = (f.options || []).map((o) =>
-        `<option value="${esc(o)}" ${String(o) === String(val ?? '') ? 'selected' : ''}>${esc(o)}</option>`).join('');
+        `<option value="${esc(o)}" ${String(o) === String(val ?? '') ? 'selected' : ''}>${esc(o)}${newMats.has(o) ? ' — новый, настройте цену!' : ''}</option>`).join('');
       return `<label class="fld" data-field="${esc(f.key)}"><span>${esc(f.label)}${unit}</span>
         <select name="${esc(f.key)}">${opts}</select></label>`;
     }

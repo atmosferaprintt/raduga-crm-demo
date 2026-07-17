@@ -637,6 +637,17 @@ async function stockMoveDialog(mat, dir, onDone) {
   form.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
 }
 
+/* Категории материалов: связь склада со справочниками калькуляции */
+const MATERIAL_CATEGORIES = {
+  '': 'Прочее (в калькуляции не участвует)',
+  block: 'Бумага блока и вклейки',
+  cover: 'Бумага обложек (брошюры)',
+  binding: 'Переплётные материалы',
+  plotter: 'Материалы плоттера',
+  sheet: 'Бумага листовой (плёнки, за лист)',
+  notebook: 'Бумага блокнотов',
+};
+
 function stockMaterialDialog(mat, onDone) {
   const v = mat || {};
   const m = openModal({
@@ -644,6 +655,11 @@ function stockMaterialDialog(mat, onDone) {
     body: `
       <form id="stock-mat-form" style="display:flex;flex-direction:column;gap:13px">
         <label class="fld"><span>Название *</span><input name="name" type="text" value="${esc(v.name || '')}" required></label>
+        <label class="fld"><span>Категория (для калькуляции)</span>
+          <select name="category">${Object.entries(MATERIAL_CATEGORIES).map(([k, label]) =>
+            `<option value="${k}" ${String(v.category || '') === k ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
+        <div class="muted small" style="margin:-6px 0 0">Материал с категорией сам появится в справочнике цен
+          с пометкой «настроить» — останется заполнить цены.</div>
         <label class="fld"><span>Единица учёта</span><input name="unit" type="text" value="${esc(v.unit || 'шт.')}" placeholder="лист А3, пог. м, шт.…"></label>
         ${mat ? '' : `<label class="fld"><span>Начальный остаток</span><input name="qty" type="number" step="any" value="0"></label>`}
         <label class="fld"><span>Минимальный остаток (0 — не следить)</span><input name="min_qty" type="number" step="any" value="${v.min_qty || 0}"></label>
@@ -659,12 +675,19 @@ function stockMaterialDialog(mat, onDone) {
     const body = {
       name: f.get('name'), unit: f.get('unit') || 'шт.',
       min_qty: Number(f.get('min_qty')) || 0, notes: f.get('notes') || '',
+      category: f.get('category') || '',
     };
     try {
+      let r = null;
       if (mat) await api('/api/stock/' + mat.id, { method: 'PUT', body });
-      else await api('/api/stock', { method: 'POST', body: { ...body, qty: Number(f.get('qty')) || 0 } });
+      else r = await api('/api/stock', { method: 'POST', body: { ...body, qty: Number(f.get('qty')) || 0 } });
       m.close();
-      toast('Сохранено', 'ok');
+      state.schema = null;
+      if (r && r.pricingPlaceholder) {
+        toast('Материал добавлен и появился в настройках калькуляции — заполните цены', 'ok');
+      } else {
+        toast('Сохранено', 'ok');
+      }
       onDone && onDone();
     } catch (e) { toastErr(e); }
   }
@@ -781,7 +804,7 @@ views.stock = async function (box) {
           <tbody>
             ${rows.length ? rows.map((r) => `
               <tr data-id="${r.id}">
-                <td><b>${esc(r.name)}</b>${r.notes ? `<div class="muted small">${esc(r.notes)}</div>` : ''}</td>
+                <td><b>${esc(r.name)}</b>${r.category ? `<div class="muted small">${esc((MATERIAL_CATEGORIES[r.category] || '').split(' (')[0])}</div>` : ''}${r.notes ? `<div class="muted small">${esc(r.notes)}</div>` : ''}</td>
                 <td class="muted">${esc(r.unit)}</td>
                 <td class="num" style="font-weight:700;${r.qty < 0 || stockLow(r) ? 'color:#C4156A' : ''}">
                   ${fmtNum(r.qty)}${stockLow(r) ? ' <span class="badge st-cancelled">мало</span>' : ''}
@@ -2153,6 +2176,71 @@ views.settings = async function (box, arg, query) {
       return bad;
     }
 
+    // Материалы со склада: строка справочника → имя материала
+    function materialRowInfo(path) {
+      if (['blockPapers', 'coverPapers', 'bindingMaterials'].includes(path[0]) && path.length >= 3) return { name: path[1] };
+      if (path[0] === 'plotter' && path[1] === 'materials' && path.length >= 4) return { name: path[2] };
+      if (path[0] === 'notebooks' && path[1] === 'papers' && path.length >= 4) return { name: path[2] };
+      if (path[0] === 'sheetPapers' && path[1] === 'fixed' && path.length === 3) return { name: path[2] };
+      return null;
+    }
+
+    let stockRows = null;
+    async function loadStockOnce() {
+      if (!stockRows) stockRows = await api('/api/stock').catch(() => []);
+      return stockRows;
+    }
+
+    // Бейджи «настроить» и подсказка цены из последней закупки
+    async function annotateMaterials() {
+      const stock = await loadStockOnce();
+      $$('#cfg-root tr', body).forEach((tr) => {
+        const inputs = $$('[data-path]', tr);
+        if (!inputs.length) return;
+        const info = materialRowInfo(JSON.parse(inputs[0].dataset.path));
+        if (!info) return;
+        const nums = inputs.filter((i) => i.dataset.type === 'number');
+        const priceInputs = nums.filter((i) => {
+          const p = JSON.parse(i.dataset.path);
+          return ['a2', 'a3', 'price'].includes(p[p.length - 1]) || (p[0] === 'sheetPapers' && p[1] === 'fixed');
+        });
+        const allZero = priceInputs.length > 0 &&
+          priceInputs.every((i) => !(parseFloat(String(i.value).replace(',', '.')) > 0));
+        const labelTd = tr.querySelector('td.k');
+        if (labelTd && allZero && !labelTd.querySelector('.chip-new')) {
+          labelTd.insertAdjacentHTML('beforeend', ' <span class="chip-new">новое — настроить</span>');
+        }
+        const sm = stock.find((s) => s.name === info.name && s.last_price > 0);
+        if (sm && priceInputs[0] && !tr.querySelector('.chip-buy')) {
+          priceInputs[0].closest('td').insertAdjacentHTML('beforeend',
+            ` <button type="button" class="chip-buy" data-rub="${sm.last_price}"
+               title="Последняя закупка: ${fmtMoney(sm.last_price)} за ${esc(sm.unit)}. Нажмите, чтобы подставить цену в у.е. по курсу материалов">закупка ${fmtMoney(sm.last_price)} →</button>`);
+        }
+      });
+    }
+
+    // Счётчики «не настроено» на подвкладках
+    function tabBadges() {
+      const zero = (dict, f) => Object.values(dict || {}).filter((v) => !(f(v) > 0)).length;
+      const counts = {
+        paper: zero(draft.blockPapers, (v) => (v.a2 || 0) + (v.a3 || 0))
+          + zero(draft.coverPapers, (v) => v.a3 || 0)
+          + zero(draft.bindingMaterials, (v) => v.price || 0)
+          + zero(draft.sheetPapers && draft.sheetPapers.fixed, (v) => Number(v) || 0),
+        plotter: zero(draft.plotter && draft.plotter.materials, (v) => v.price || 0),
+        notebooks: zero(draft.notebooks && draft.notebooks.papers, (v) => v.a3 || 0),
+      };
+      $$('#cfg-subtabs button', body).forEach((b) => {
+        const n = counts[b.dataset.sub] || 0;
+        let chip = b.querySelector('.tab-badge');
+        if (n) {
+          if (!chip) { chip = document.createElement('span'); chip.className = 'tab-badge'; b.appendChild(chip); }
+          chip.textContent = n;
+          chip.title = 'Материалов без цен: ' + n;
+        } else if (chip) chip.remove();
+      });
+    }
+
     function renderSub() {
       const t = tabsList.find((x) => x.key === sub);
       $$('#cfg-subtabs button', body).forEach((b) => b.classList.toggle('active', b.dataset.sub === sub));
@@ -2163,6 +2251,8 @@ views.settings = async function (box, arg, query) {
             <h4>${esc(cfgLabel(k))} ${hintBtn([k])}</h4>
             ${isObj(draft[k]) ? cfgRender(draft[k], [k], 0) : `<table class="cfg-table"><tr><td class="k">${esc(cfgLabel(k))} ${hintBtn([k])}</td><td>${cfgInput(draft[k], [k])}</td></tr></table>`}
           </div>`).join('')}`;
+      tabBadges();
+      annotateMaterials().catch(() => {});
     }
 
     $$('#cfg-subtabs button', body).forEach((b) => b.addEventListener('click', () => {
@@ -2174,7 +2264,29 @@ views.settings = async function (box, arg, query) {
 
     root.addEventListener('click', (e) => {
       const btn = e.target.closest('.hint-btn');
-      if (btn) openHint(btn);
+      if (btn) { openHint(btn); return; }
+      const buy = e.target.closest('.chip-buy');
+      if (buy) {
+        // Подставить цену из последней закупки: рубли → у.е. по курсу материалов
+        const rub = Number(buy.dataset.rub) || 0;
+        const rate = Number(draft.currency && draft.currency.materials) || 90;
+        const ue = Math.round((rub / rate) * 1e6) / 1e6;
+        const tr = buy.closest('tr');
+        const byKey = {};
+        $$('[data-path]', tr).forEach((i) => {
+          const p = JSON.parse(i.dataset.path);
+          byKey[p[p.length - 1]] = i;
+        });
+        let touched = false;
+        if (byKey.a3) { byKey.a3.value = ue; touched = true; }
+        if (byKey.a2) { byKey.a2.value = Math.round(ue * 2 * 1e6) / 1e6; touched = true; }
+        if (byKey.price) { byKey.price.value = ue; touched = true; }
+        if (!touched) {
+          const first = $$('[data-path][data-type="number"]', tr)[0];
+          if (first) first.value = ue;
+        }
+        toast('Цена из закупки подставлена в у.е. по курсу материалов. Проверьте и нажмите «Сохранить»', 'ok');
+      }
     });
 
     $('#btn-cfg-save', body).addEventListener('click', async () => {

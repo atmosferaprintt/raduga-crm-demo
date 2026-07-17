@@ -427,3 +427,21 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .pair { display: inline-flex; align-items: center; gap: 7px; }
 .pair .pl { font-size: 12px; color: #777; white-space: nowrap; }
 .pair input { max-width: 110px; }
+
+/* --- материалы со склада в настройках калькуляции --- */
+.chip-new {
+  display: inline-block; font-size: 10.5px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .3px; padding: 2px 8px; border-radius: 20px;
+  background: #E31C79; color: #fff; vertical-align: 1px; margin-left: 4px;
+}
+.chip-buy {
+  display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; margin-left: 6px;
+  border-radius: 20px; border: 1px solid #c9d167; background: #DFE690; color: #111; cursor: pointer;
+  white-space: nowrap;
+}
+.chip-buy:hover { background: #E31C79; border-color: #E31C79; color: #fff; }
+.tab-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 4px; margin-left: 7px; border-radius: 50%;
+  background: #E31C79; color: #fff; font-size: 10.5px; font-weight: 800;
+}

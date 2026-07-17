@@ -178,8 +178,34 @@
     ['Иск. кожа', 'пог. м', 12, 10],
   ].map(([name, unit, qty, min_qty], i) => ({
     id: i + 1, name, unit, qty, min_qty, notes: '',
+    category: /^(Офсет|Мелов)/.test(name) ? 'block'
+      : ['Картон переплётный', 'Эфалин', 'Балакрон', 'Иск. кожа'].includes(name) ? 'binding' : '',
     created_at: dt(now.getTime() - 60 * day),
   }));
+  // Демо нового материала со склада: заготовка «новое — настроить» в справочнике
+  MATERIALS.push({
+    id: MATERIALS.length + 1, name: 'Крафт 90', unit: 'лист А3', qty: 500, min_qty: 100,
+    notes: 'Новый материал: цены в настройках ещё не заполнены', category: 'block',
+    created_at: dt(now.getTime() - day),
+  });
+  cfg.blockPapers['Крафт 90'] = { a2: 0, a3: 0, thickness: 0 };
+
+  const DEMO_MAT_BLANKS = {
+    block: [() => cfg.blockPapers, { a2: 0, a3: 0, thickness: 0 }],
+    cover: [() => cfg.coverPapers, { a3: 0, thickness: 0 }],
+    binding: [() => cfg.bindingMaterials, { price: 0, unit: '' }],
+    plotter: [() => cfg.plotter.materials, { price: 0, size: '' }],
+    sheet: [() => cfg.sheetPapers.fixed, 0],
+    notebook: [() => cfg.notebooks.papers, { thickness: 0, a3: 0 }],
+  };
+  function demoEnsurePlaceholder(name, category) {
+    const spec = DEMO_MAT_BLANKS[category];
+    if (!spec || !name) return false;
+    const dict = spec[0]();
+    if (name in dict) return false;
+    dict[name] = typeof spec[1] === 'object' ? { ...spec[1] } : spec[1];
+    return true;
+  }
   let MOVES = [
     { id: 1, material_id: 2, order_id: null, qty: 15000, reason: 'Поставка (демо)', user_name: 'Демо-руководитель', created_at: dt(now.getTime() - 20 * day) },
     { id: 2, material_id: 2, order_id: 1, qty: -2500, reason: 'Заказ № 2026-0101', user_name: 'Иванова А.', created_at: dt(now.getTime() - 5 * day) },
@@ -309,9 +335,10 @@
     }
     if (path === '/api/stock' && method === 'POST') {
       if (MATERIALS.some((m) => m.name === body.name)) return J({ error: 'Материал с таким названием уже есть' }, 400);
-      const m = { id: nextMaterialId++, name: body.name, unit: body.unit || 'шт.', qty: +body.qty || 0, min_qty: +body.min_qty || 0, notes: body.notes || '', created_at: dt(now) };
+      const m = { id: nextMaterialId++, name: body.name, unit: body.unit || 'шт.', qty: +body.qty || 0, min_qty: +body.min_qty || 0, notes: body.notes || '', category: body.category || '', created_at: dt(now) };
       MATERIALS.push(m); MATERIALS.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-      return J({ id: m.id });
+      const placeholder = demoEnsurePlaceholder(m.name, m.category);
+      return J({ id: m.id, pricingPlaceholder: placeholder });
     }
     if (/^\/api\/stock\/\d+\/move$/.test(path) && method === 'POST') {
       const id = Number(path.split('/')[3]);
@@ -336,7 +363,11 @@
     if (/^\/api\/stock\/\d+$/.test(path)) {
       const id = Number(path.split('/')[3]);
       const m = MATERIALS.find((x) => x.id === id);
-      if (method === 'PUT' && m) { for (const k of ['name', 'unit', 'min_qty', 'notes']) if (body[k] != null) m[k] = k === 'min_qty' ? +body[k] : body[k]; return J({ ok: true }); }
+      if (method === 'PUT' && m) {
+        for (const k of ['name', 'unit', 'min_qty', 'notes', 'category']) if (body[k] != null) m[k] = k === 'min_qty' ? +body[k] : body[k];
+        demoEnsurePlaceholder(m.name, m.category);
+        return J({ ok: true });
+      }
       if (method === 'DELETE') return J({ error: 'В демо-версии удаление отключено' }, 400);
       return J({ ok: true });
     }
