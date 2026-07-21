@@ -8,7 +8,7 @@
   const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const scale = () => 0.82 + rnd() * 0.5; // ×0.82…1.32
 
-  const cfg = JSON.parse(JSON.stringify(window.DEMO_PRICING.defaults));
+  let cfg = JSON.parse(JSON.stringify(window.DEMO_PRICING.defaults));
   cfg.currency = { materials: 95, works: 75 };
   const moneySubtrees = ['blockPapers', 'coverPapers', 'bindingMaterials', 'binderBoard',
     'print', 'postpress', 'binding', 'uv', 'plotter', 'sheetPapers'];
@@ -24,6 +24,29 @@
     return node;
   }
   for (const k of moneySubtrees) if (cfg[k]) cfg[k] = scaleTree(cfg[k], k);
+
+  /* ---------- реальный прайс по паролю ----------
+     В pricing-real.enc.js лежит справочник, зашифрованный AES-256-GCM.
+     Правильный пароль при входе расшифровывает его прямо в браузере;
+     без пароля работают условные (искажённые) цены. */
+  const isReal = () => sessionStorage.getItem('demo_real_cfg') != null;
+  if (isReal()) {
+    try { cfg = JSON.parse(sessionStorage.getItem('demo_real_cfg')); } catch (e) {}
+  }
+
+  async function tryUnlockReal(password) {
+    try {
+      const B = window.PRICING_REAL_ENC;
+      if (!B || !password || !window.crypto || !crypto.subtle) return null;
+      const un64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+      const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+      const key = await crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: un64(B.salt), iterations: B.iter, hash: 'SHA-256' },
+        keyMat, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(B.iv) }, key, un64(B.data));
+      return JSON.parse(new TextDecoder().decode(plain));
+    } catch (e) { return null; }
+  }
 
   const engines = window.DEMO_PRICING.engines;
   const pcommon = window.DEMO_PRICING.common;
@@ -284,13 +307,27 @@
     let body = {};
     try { body = opts.body ? JSON.parse(opts.body) : {}; } catch (e) {}
 
-    // авторизация: любой логин/пароль
+    // авторизация: любой логин/пароль; правильный пароль открывает реальные цены
     if (path === '/api/login') {
-      const user = USERS.find((x) => x.login === String(body.login || '').toLowerCase()) || USERS[0];
-      sessionStorage.setItem('demo_user', JSON.stringify(user));
-      return J({ user });
+      return (async () => {
+        const real = await tryUnlockReal(String(body.password || ''));
+        const user = USERS.find((x) => x.login === String(body.login || '').toLowerCase()) || USERS[0];
+        sessionStorage.setItem('demo_user', JSON.stringify(user));
+        if (real) {
+          sessionStorage.setItem('demo_real_cfg', JSON.stringify(real));
+          // перезагрузка: заказы и витрины пересобираются уже на реальных ценах
+          setTimeout(() => location.reload(), 150);
+        }
+        return await J({ user });
+      })();
     }
-    if (path === '/api/logout') { sessionStorage.removeItem('demo_user'); return J({}); }
+    if (path === '/api/logout') {
+      sessionStorage.removeItem('demo_user');
+      const wasReal = isReal();
+      sessionStorage.removeItem('demo_real_cfg');
+      if (wasReal) setTimeout(() => location.reload(), 150);
+      return J({});
+    }
     if (path === '/api/me') return me() ? J({ user: me() }) : J({ error: 'Требуется вход' }, 401);
     if (path === '/api/me/password') return J({ ok: true });
     if (!me()) return J({ error: 'Требуется вход' }, 401);
@@ -588,12 +625,20 @@
   document.addEventListener('DOMContentLoaded', () => {
     const b = document.createElement('div');
     b.id = 'demo-banner';
-    b.innerHTML = '⚠️ <b>ДЕМОНСТРАЦИОННАЯ ВЕРСИЯ.</b> Все данные, клиенты и цены — условные, ' +
-      'заполнены по умолчанию для примера и не являются реальным прайсом типографии «Радуга». ' +
-      'Вход — любой логин и пароль.';
-    b.style.cssText = 'background:#DFE690;color:#111;text-align:center;' +
-      'font:500 12.5px -apple-system,Segoe UI,Roboto,sans-serif;padding:7px 12px;letter-spacing:.02em;' +
-      'border-bottom:1px solid #c9d167';
+    if (isReal()) {
+      b.innerHTML = '🔒 <b>ДЕМО С РЕАЛЬНЫМИ ЦЕНАМИ</b> (открыто по паролю). Заказы, клиенты и склад — вымышленные, ' +
+        'а справочники цен настоящие. Не передавайте ссылку вместе с паролем третьим лицам.';
+      b.style.cssText = 'background:#E31C79;color:#fff;text-align:center;' +
+        'font:600 12.5px -apple-system,Segoe UI,Roboto,sans-serif;padding:7px 12px;letter-spacing:.02em;' +
+        'border-bottom:1px solid #C4156A';
+    } else {
+      b.innerHTML = '⚠️ <b>ДЕМОНСТРАЦИОННАЯ ВЕРСИЯ.</b> Все данные, клиенты и цены — условные, ' +
+        'заполнены по умолчанию для примера и не являются реальным прайсом типографии «Радуга». ' +
+        'Вход — любой логин и пароль.';
+      b.style.cssText = 'background:#DFE690;color:#111;text-align:center;' +
+        'font:500 12.5px -apple-system,Segoe UI,Roboto,sans-serif;padding:7px 12px;letter-spacing:.02em;' +
+        'border-bottom:1px solid #c9d167';
+    }
     document.body.prepend(b);
     const style = document.createElement('style');
     style.textContent = '#sidebar { height: auto !important; min-height: 100vh; } ' +
