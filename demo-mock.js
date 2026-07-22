@@ -35,17 +35,23 @@
   }
 
   async function tryUnlockReal(password) {
-    try {
-      const B = window.PRICING_REAL_ENC;
-      if (!B || !password || !window.crypto || !crypto.subtle) return null;
-      const un64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-      const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-      const key = await crypto.subtle.deriveKey(
-        { name: 'PBKDF2', salt: un64(B.salt), iterations: B.iter, hash: 'SHA-256' },
-        keyMat, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(B.iv) }, key, un64(B.data));
-      return JSON.parse(new TextDecoder().decode(plain));
-    } catch (e) { return null; }
+    // пробелы и переносы из мессенджеров обрезаем: частая причина «пароль не сработал»
+    password = String(password || '').trim();
+    const blobs = Array.isArray(window.PRICING_REAL_ENC) ? window.PRICING_REAL_ENC
+      : window.PRICING_REAL_ENC ? [window.PRICING_REAL_ENC] : [];
+    if (!password || !blobs.length || !window.crypto || !crypto.subtle) return null;
+    const un64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+    for (const B of blobs) {
+      try {
+        const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+        const key = await crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: un64(B.salt), iterations: B.iter, hash: 'SHA-256' },
+          keyMat, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+        const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: un64(B.iv) }, key, un64(B.data));
+        return JSON.parse(new TextDecoder().decode(plain));
+      } catch (e) { /* не этот пароль - пробуем следующий блоб */ }
+    }
+    return null;
   }
 
   const engines = window.DEMO_PRICING.engines;
@@ -317,6 +323,16 @@
           sessionStorage.setItem('demo_real_cfg', JSON.stringify(real));
           // перезагрузка: заказы и витрины пересобираются уже на реальных ценах
           setTimeout(() => location.reload(), 150);
+        } else if (String(body.password || '').trim().length >= 10) {
+          // длинный пароль явно вводили ради реальных цен - честно скажем, что он не подошёл
+          setTimeout(() => {
+            const b = document.getElementById('demo-banner');
+            if (b) {
+              b.innerHTML = '⚠️ <b>ПАРОЛЬ РЕАЛЬНЫХ ЦЕН НЕ ПОДОШЁЛ</b> — сейчас показаны условные (искажённые) цены. ' +
+                'Проверьте пароль: без лишних пробелов, с точным регистром букв. Выйдите и войдите заново.';
+              b.style.background = '#F5C9DE';
+            }
+          }, 300);
         }
         return await J({ user });
       })();
