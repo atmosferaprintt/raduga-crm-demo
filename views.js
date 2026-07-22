@@ -1997,7 +1997,7 @@ views.settings = async function (box, arg, query) {
     offsetPaperWasteBooks: 'Отход бумаги, офсет (книги/брошюры)',
     offsetPaperWasteSheets: 'Отход бумаги, офсет (листовая/блокноты)',
     digitalPaperWaste: 'Отход бумаги, цифра/струя', digitalPrintMarkup: 'Надбавка цифровой печати',
-    coverExtraSheets: 'Доп. листы на обложку, шт.', setupSheetsPerInk: 'Приладка на краску, листов',
+    setupSheetsPerInk: 'Приладка на краску, листов',
     bookBindingCeilRubPerCopy: 'Потолок переплёта (цифра), руб./экз.',
     brochurePostpressCeilRubPerCopy: 'Потолок постпечати брошюры (цифра), руб./экз.',
     bookCase: 'Геометрия переплётной крышки', boardSheet: 'Лист картона, мм', efalinSheet: 'Лист эфалина, мм',
