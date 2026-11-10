@@ -604,6 +604,122 @@
     return baseFetch(url, opts);
   };
 
+  /* ---------- «Посмотреть СРМ глазами…»: переключение роли без выхода ----------
+     Данные демо при переключении сохраняются: можно отметить работу за печатника
+     и сразу посмотреть, что увидит мастер. */
+  const EYES = [
+    { id: 1, title: 'Руководитель', sees: 'всё: цены, себестоимость, настройки, справочники', home: '#/orders' },
+    { id: 2, title: 'Менеджер', sees: 'заказы, клиенты, калькулятор и КП; цех только смотрит', home: '#/orders' },
+    { id: 6, title: 'Мастер цеха', sees: 'очереди участков, машины, отметки за сотрудников', home: '#/production' },
+    { id: 7, title: 'Печатник', sees: 'только свои задания: офсет и цифра, без цен и клиентов', home: '#/work' },
+    { id: 8, title: 'Переплётчик', sees: 'только свои задания: переплёт, резка, отделка', home: '#/work' },
+  ];
+  async function eyesUsers() {
+    const baseUsers = await base('GET', '/api/users').catch(() => []);
+    const all = [...(Array.isArray(baseUsers) ? baseUsers : []), ...EXTRA_USERS];
+    return EYES.map((e) => ({ ...e, user: all.find((u) => u.id === e.id) })).filter((e) => e.user);
+  }
+  const initials = (name) => String(name || '?').replace(/\(.*?\)/g, '').trim().split(/\s+/).slice(0, 2)
+    .map((w) => w[0] || '').join('').toUpperCase();
+  const esc2 = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function switchTo(card) {
+    const user = { areas: [], ...card.user };
+    sessionStorage.setItem('demo_user', JSON.stringify(user));
+    document.querySelectorAll('.modal-overlay').forEach((m) => m.remove());
+    closeEyes();
+    // ядро приложения (app.js): новый пользователь без перезагрузки страницы
+    state.user = user;
+    state.users = state.clients = state.schema = state.suppliers = null;
+    location.hash = card.home;
+    showApp();
+    toast(`Теперь вы смотрите глазами: ${card.title}`, 'ok');
+  }
+
+  let eyesPanel = null;
+  function closeEyes() { if (eyesPanel) { eyesPanel.remove(); eyesPanel = null; } }
+  async function openEyes() {
+    if (eyesPanel) { closeEyes(); return; }
+    const cards = await eyesUsers();
+    const cur = (me() || {}).id;
+    eyesPanel = document.createElement('div');
+    eyesPanel.id = 'demo-eyes-panel';
+    eyesPanel.innerHTML = `
+      <div class="de-h">Посмотреть СРМ глазами…</div>
+      <div class="de-sub">Демо: люди и цифры выдуманные. Данные при переключении сохраняются.</div>
+      ${cards.map((c) => `
+        <button class="de-item${c.id === cur ? ' cur' : ''}" data-id="${c.id}">
+          <span class="de-av">${esc2(initials(c.user.name))}</span>
+          <span class="de-txt"><b>${esc2(c.title)}${/руководител/i.test(c.user.name) ? '' : ' · ' + esc2(String(c.user.name).replace(/\s*\(.*\)$/, ''))}</b>
+            <span>видит: ${esc2(c.sees)}</span></span>
+          ${c.id === cur ? '<span class="de-ok">✓</span>' : ''}
+        </button>`).join('')}
+      <button class="de-reset">↻ Начать демо заново</button>`;
+    document.body.appendChild(eyesPanel);
+    eyesPanel.querySelectorAll('.de-item').forEach((b) => b.addEventListener('click', () => {
+      const c = cards.find((x) => String(x.id) === b.dataset.id);
+      if (c) switchTo(c);
+    }));
+    eyesPanel.querySelector('.de-reset').addEventListener('click', () => location.reload());
+  }
+
+  function mountEyes() {
+    const css = document.createElement('style');
+    css.textContent = `
+      #demo-eyes { position: fixed; left: 12px; bottom: 12px; z-index: 90; display: none; align-items: center; gap: 8px;
+        background: #111; color: #fff; border: none; border-radius: 22px; padding: 9px 14px 9px 10px; cursor: pointer;
+        font: 600 13px -apple-system, Segoe UI, Roboto, sans-serif; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+      #demo-eyes .de-av { width: 26px; height: 26px; font-size: 11px; }
+      #demo-eyes:hover { background: #E31C79; }
+      #demo-eyes-panel { position: fixed; left: 12px; bottom: 62px; z-index: 95; width: 360px; max-width: calc(100vw - 24px);
+        max-height: calc(100vh - 90px); overflow-y: auto; background: #16181c; color: #fff; border-radius: 18px; padding: 16px 12px 12px;
+        box-shadow: 0 18px 50px rgba(0,0,0,.4); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+      #demo-eyes-panel .de-h { font-size: 17px; font-weight: 800; padding: 0 8px; }
+      #demo-eyes-panel .de-sub { font-size: 12.5px; color: #9aa0a6; padding: 3px 8px 10px; }
+      #demo-eyes-panel .de-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: transparent;
+        border: 1px solid transparent; border-radius: 14px; padding: 9px 8px; color: #fff; cursor: pointer; font: inherit; }
+      #demo-eyes-panel .de-item:hover { background: rgba(255,255,255,.06); }
+      #demo-eyes-panel .de-item.cur { background: rgba(223,230,144,.12); border-color: rgba(223,230,144,.55); }
+      .de-av { flex: none; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+        background: #2b2f36; color: #fff; font-weight: 800; font-size: 14px; letter-spacing: .02em; }
+      #demo-eyes-panel .de-item.cur .de-av { background: #DFE690; color: #111; }
+      #demo-eyes-panel .de-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+      #demo-eyes-panel .de-txt b { font-size: 14.5px; }
+      #demo-eyes-panel .de-item.cur .de-txt b { color: #DFE690; }
+      #demo-eyes-panel .de-txt span { font-size: 12.5px; color: #9aa0a6; line-height: 1.35; }
+      #demo-eyes-panel .de-ok { flex: none; width: 24px; height: 24px; border-radius: 50%; background: #DFE690; color: #111;
+        display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; }
+      #demo-eyes-panel .de-reset { display: block; width: 100%; margin-top: 10px; padding: 11px; border: none; border-radius: 12px;
+        background: #2b2f36; color: #fff; font: 600 14px -apple-system, Segoe UI, Roboto, sans-serif; cursor: pointer; }
+      #demo-eyes-panel .de-reset:hover { background: #E31C79; }
+      @media print { #demo-eyes, #demo-eyes-panel { display: none !important; } }`;
+    document.head.appendChild(css);
+    const btn = document.createElement('button');
+    btn.id = 'demo-eyes';
+    btn.title = 'Посмотреть СРМ глазами другой роли';
+    document.body.appendChild(btn);
+    btn.addEventListener('click', (e) => { e.stopPropagation(); openEyes(); });
+    document.addEventListener('mousedown', (e) => {
+      if (eyesPanel && !eyesPanel.contains(e.target) && e.target !== btn && !btn.contains(e.target)) closeEyes();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeEyes(); });
+    // кнопка видна, когда вошли; подпись: текущая роль
+    const sync = () => {
+      const u = me();
+      const app = document.getElementById('app');
+      const show = !!u && app && !app.classList.contains('hidden');
+      btn.style.display = show ? 'inline-flex' : 'none';
+      if (!show) { closeEyes(); return; }
+      const card = EYES.find((c) => c.id === u.id);
+      const label = card ? card.title : (u.role === 'worker' ? 'Сотрудник цеха' : u.role === 'master' ? 'Мастер цеха' : u.role === 'admin' ? 'Руководитель' : 'Менеджер');
+      const html = `<span class="de-av">${esc2(initials(u.name))}</span>Глазами: ${esc2(label)} ▾`;
+      if (btn.innerHTML !== html) btn.innerHTML = html;
+    };
+    setInterval(sync, 700);
+    sync();
+  }
+  document.addEventListener('DOMContentLoaded', mountEyes);
+
   /* ---------- подсказка на экране входа: какие логины пробовать ---------- */
   document.addEventListener('DOMContentLoaded', () => {
     const form = document.getElementById('login-form');
