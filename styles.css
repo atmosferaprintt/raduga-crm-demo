@@ -445,3 +445,159 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   min-width: 17px; height: 17px; padding: 0 4px; margin-left: 7px; border-radius: 50%;
   background: #E31C79; color: #fff; font-size: 10.5px; font-weight: 800;
 }
+
+/* --- техкарта: маршрут по участкам --- */
+.tc-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tc-tiles .tile .t-value { font-size: 17px; }
+.tc-h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin: 18px 0 8px; }
+.tc-lanes { display: flex; flex-direction: column; gap: 8px; }
+.tc-lane { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 10px; align-items: center;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fafafa; }
+.tc-lane-title { font-weight: 800; font-size: 13px; }
+.tc-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tc-op { background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--c, #9ca3af);
+  border-radius: 7px; padding: 5px 9px 6px; min-width: 128px; max-width: 210px; box-shadow: var(--shadow); }
+.tc-op-warn { border-color: #fde68a; background: var(--yellow-bg); }
+.tc-op-area { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--c, #9ca3af); }
+.tc-op-name { font-size: 12.5px; font-weight: 700; line-height: 1.25; margin-top: 1px; }
+.tc-op-machine { font-size: 11.5px; color: var(--text-2); }
+.tc-op-meta { font-size: 11.5px; color: var(--text-3); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tc-arrow { color: var(--text-3); font-weight: 700; }
+.tc-into { font-size: 12px; font-weight: 700; color: var(--accent-dark); background: var(--accent-light);
+  border: 1px solid #F5BBD7; border-radius: 20px; padding: 3px 10px; white-space: nowrap; }
+.tc-table td { vertical-align: top; }
+.tc-area-row td { background: #f9fafb; border-top: 2px solid var(--border); }
+.tc-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+.tc-sub { font-size: 11px; color: var(--text-3); white-space: normal; max-width: 260px; margin-left: auto; }
+.tc-note-inline { font-size: 11.5px; color: #854d0e; margin-top: 2px; }
+.tc-ok { color: var(--green); font-weight: 700; }
+@media (max-width: 1100px) { .tc-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .tc-lane { grid-template-columns: 1fr; } }
+
+/* --- настройки → производство --- */
+.prod-intro { max-width: 860px; margin: -6px 0 14px; line-height: 1.55; }
+.pr-tbl td { padding: 6px 5px; }
+.pr-tbl th { padding: 8px 5px; white-space: normal; }
+.pr-tbl input, .pr-tbl select { padding: 5px 8px; font-size: 13px; }
+.pr-in { width: 80px; }
+.pr-xs { width: 62px; }
+.pr-fmt { width: 86px; }
+.pr-name { width: 190px; }
+.pr-note { min-width: 220px; }
+.pr-sel { width: 150px; }
+.badge-approx { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 20px;
+  background: var(--yellow-bg); color: #854d0e; border: 1px solid #fde68a; white-space: nowrap; }
+
+/* --- техкарта в печатном ТЗ --- */
+.tz-route-row { font-size: 12px; padding: 2px 0; }
+.tz-ops { table-layout: fixed; }
+.kp .tz-ops th, .kp .tz-ops td { padding: 5px 5px; font-size: 11px; height: 24px; overflow-wrap: break-word; hyphens: auto; }
+.kp .tz-ops th { font-size: 10px; }
+.tz-ops th:nth-child(1) { width: 24%; } .tz-ops th:nth-child(2) { width: 10%; } .tz-ops th:nth-child(3) { width: 13%; }
+.tz-ops th:nth-child(4) { width: 15%; } .tz-ops th:nth-child(5) { width: 9%; }
+.tz-ops th:nth-child(6), .tz-ops th:nth-child(7) { width: 9%; } .tz-ops th:nth-child(8) { width: 11%; }
+.kp .tz-ops td:first-child { width: auto; }
+.kp .tz-ops td.num { text-align: right; white-space: normal; }
+.tz-ops td small { font-size: 9.5px; color: #444; font-weight: 400; }
+.tz-ops tr.tz-area td { background: #f3f4f6; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.tz-foot-note { font-size: 11px; color: #555; margin-top: 4px; }
+.tc-sub-left { margin-left: 0; max-width: none; }
+
+/* --- производство: очереди участков --- */
+.fq-areas { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fq-area { border: 1px solid var(--border-dark); background: #fff; border-radius: 20px; padding: 6px 12px; font: inherit;
+  font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.fq-area:hover { border-color: var(--accent); }
+.fq-area.active { background: #111; color: #fff; border-color: #111; }
+.fq-area.empty { color: var(--text-3); }
+.fq-area.active.empty { color: #ddd; }
+.fq-cnt { background: var(--bg); color: var(--text-2); border-radius: 10px; padding: 0 7px; font-size: 11.5px; }
+.fq-area.active .fq-cnt { background: #333; color: #fff; }
+.fq-work { color: var(--green); font-size: 11.5px; }
+.fq-hint { margin-bottom: 12px; }
+.fq-board { display: grid; gap: 12px; overflow-x: auto; align-items: start; padding-bottom: 6px; }
+.fq-col { background: #eef0f3; border-radius: 10px; padding: 9px; min-height: 120px; }
+.fq-col.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.fq-col-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 800; font-size: 13px; padding: 2px 3px 8px; }
+.fq-cards { display: flex; flex-direction: column; gap: 8px; min-height: 30px; }
+.fq-empty { padding: 10px 4px; }
+.fq-card { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; box-shadow: var(--shadow);
+  border-left: 4px solid var(--border-dark); font-size: 12.5px; }
+.fq-card[draggable="true"] { cursor: grab; }
+.fq-card.dragging { opacity: .45; }
+.fq-card.st-work { border-left-color: var(--green); }
+.fq-card.st-paused { border-left-color: var(--yellow); }
+.fq-card.st-done { border-left-color: #9ca3af; opacity: .7; }
+.fq-card.blocked { background: #fafafa; }
+.fq-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--text-2); }
+.fq-num { font-weight: 800; color: var(--text); }
+.fq-title { margin-top: 2px; font-size: 12px; }
+.fq-op { margin-top: 5px; font-size: 13px; }
+.fq-meta { margin-top: 2px; font-size: 12px; }
+.fq-note { margin-top: 4px; font-size: 11.5px; color: #854d0e; }
+.fq-foot { margin-top: 6px; }
+.fq-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.fq-actions:empty { display: none; }
+.fq-done { margin-top: 8px; font-size: 12px; }
+.fq-done summary { cursor: pointer; color: var(--text-2); padding: 3px; }
+.fq-done .fq-card { margin-top: 6px; }
+.fq-progress { height: 7px; background: #e5e7eb; border-radius: 6px; overflow: hidden; }
+.fq-progress > div { height: 100%; background: var(--green); border-radius: 6px; }
+.fo-head { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.fo-tbl td { vertical-align: top; }
+.fo-tbl tr.st-row-done td { color: var(--text-3); }
+.fo-stage { margin-top: 4px; padding: 4px 6px; font-size: 12.5px; }
+.fj-sum { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.fj-sum .t-value { font-size: 17px; }
+
+/* статусы заданий */
+.op-st { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.op-st-ready { background: #ecfdf3; color: #166534; }
+.op-st-wait { background: #f3f4f6; color: #6b7280; }
+.op-st-work { background: #dcfce7; color: #15803d; }
+.op-st-paused { background: var(--yellow-bg); color: #854d0e; }
+.op-st-done { background: #e5e7eb; color: #374151; }
+
+/* статусы на схеме техкарты */
+.tc-op.tc-st-done { opacity: .6; }
+.tc-op.tc-st-work { box-shadow: 0 0 0 2px #86efac; }
+.tc-op.tc-st-paused { box-shadow: 0 0 0 2px #fde68a; }
+.tc-op-st { font-size: 11px; font-weight: 700; margin-top: 2px; color: var(--green); }
+.tc-st-paused .tc-op-st { color: #854d0e; }
+.tc-st-done .tc-op-st { color: var(--text-2); }
+
+/* --- мои задания (сотрудник цеха, телефон) --- */
+.wk { max-width: 640px; margin: 0 auto; }
+.wk-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+.wk-h { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin: 16px 0 8px; }
+.wk-card { background: #fff; border: 1px solid var(--border); border-left: 5px solid var(--border-dark); border-radius: 10px;
+  padding: 13px 14px; margin-bottom: 10px; box-shadow: var(--shadow); }
+.wk-card.st-work { border-left-color: var(--green); }
+.wk-card.st-paused { border-left-color: var(--yellow); }
+.wk-card.wk-active { border-width: 2px; border-left-width: 6px; border-color: #86efac; border-left-color: var(--green); }
+.wk-top { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-2); }
+.wk-num { font-weight: 800; color: var(--text); }
+.wk-op { font-size: 18px; font-weight: 800; margin-top: 4px; line-height: 1.25; }
+.wk-part { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.wk-qty { font-size: 20px; font-weight: 800; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.wk-sub { font-size: 13px; margin-top: 3px; color: var(--text-2); }
+.wk-note { font-size: 13px; margin-top: 6px; color: #854d0e; background: var(--yellow-bg); border-radius: 6px; padding: 5px 8px; }
+.wk-foot { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.wk-timer { font-size: 13px; font-weight: 700; color: var(--green); }
+.wk-actions { display: flex; gap: 8px; margin-top: 10px; }
+.wk-actions:empty { display: none; }
+.wk-btn { flex: 1; justify-content: center; padding: 13px 14px; font-size: 16px; font-weight: 700; }
+.wk-done summary { cursor: pointer; color: var(--text-2); padding: 6px 0; }
+body.role-worker #main { padding: 14px 12px 30px; }
+@media (max-width: 900px) {
+  body.role-worker #sidebar { display: none; }
+}
+
+.fo-tbl { font-size: 12.5px; }
+.fo-tbl th, .fo-tbl td { padding: 8px 7px; }
+.fo-tbl td:first-child { min-width: 150px; }
+.fo-tbl .btn-sm { padding: 4px 8px; font-size: 12px; }
+.fo-tbl .op-st { white-space: normal; max-width: 170px; }
+.fo-tbl td.fo-act { min-width: 118px; }
+.fo-tbl td.fo-act .btn { margin: 0 3px 4px 0; }

@@ -200,12 +200,17 @@ views.calc = async function (box, arg, query) {
       <div class="panel panel-pad">
         <h3>Результат</h3>
         <div id="calc-result"><div class="muted">Заполните параметры и нажмите «Рассчитать»</div></div>
+        <div id="calc-tv" class="hidden"></div>
         <div class="calc-actions">
           <button class="btn btn-primary" id="btn-kp-calc" disabled title="Распечатать или сохранить в PDF без создания заказа">Коммерческое предложение</button>
           <button class="btn" id="btn-save-new" disabled>Сохранить в новый заказ</button>
           ${order ? `<button class="btn btn-primary" id="btn-save-order" disabled>Обновить заказ № ${esc(order.number)}</button>` : ''}
         </div>
       </div>
+    </div>
+    <div class="panel panel-pad hidden" id="calc-techcard" style="margin-top:16px">
+      <h3>Техкарта: маршрут по участкам</h3>
+      <div id="calc-techcard-body"></div>
     </div>`;
 
   const form = $('#calc-form', box);
@@ -360,14 +365,67 @@ views.calc = async function (box, arg, query) {
       lastResult = await api('/api/calc/' + type, { method: 'POST', body: params });
       lastParams = params;
       resultBox.innerHTML = calcResultHTML(lastResult);
+      renderTechcard(lastResult);
+      renderTirajVariants();
       setSaveEnabled(true);
     } catch (e) {
       lastResult = lastParams = null;
       resultBox.innerHTML = `<div class="form-error">${esc(e.message)}</div>`;
+      renderTechcard(null);
+      renderTirajVariants();
       setSaveEnabled(false);
     } finally {
       btn.disabled = false;
     }
+  }
+
+  // Варианты тиража: тот же расчёт для нескольких тиражей, таблица идёт в заказ и в КП
+  function renderTirajVariants() {
+    const tv = $('#calc-tv', box);
+    const hasTiraj = currentFields().some((f) => f.key === 'tiraj');
+    tv.classList.toggle('hidden', !lastResult || !hasTiraj);
+    if (!lastResult || !hasTiraj) { tv.innerHTML = ''; return; }
+    const cur = Number(lastParams.tiraj) || lastResult.quantity || 0;
+    const suggest = [cur / 2, cur, cur * 2, cur * 3].map((x) => Math.max(1, Math.round(x))).filter((x, i, a) => a.indexOf(x) === i);
+    const rows = lastResult.tirajVariants || [];
+    tv.innerHTML = `
+      <div class="calc-group-title" style="margin-top:14px">Варианты тиража для КП</div>
+      <div class="toolbar" style="margin-top:8px">
+        <input type="text" id="tv-list" value="${esc((rows.length ? rows.map((r) => r.tiraj) : suggest).join(', '))}" style="flex:1;min-width:160px" title="Тиражи через запятую">
+        <button class="btn btn-sm" id="tv-run">Посчитать</button>
+        ${rows.length ? '<button class="btn btn-sm btn-ghost" id="tv-clear">Убрать</button>' : ''}
+      </div>
+      ${rows.length ? `<div class="tbl-wrap" style="margin-top:8px"><table class="tbl">
+        <thead><tr><th class="num">Тираж</th><th class="num">За тираж</th><th class="num">За экз.</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr${r.tiraj === cur ? ' style="font-weight:700"' : ''}><td class="num">${fmtNum(r.tiraj)}</td>
+          <td class="num">${fmtMoney(r.priceTotal)}</td><td class="num">${fmtMoney(r.pricePerItem)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="muted small">Таблица сохранится в заказе и выйдет в КП.</div>` : ''}`;
+    $('#tv-run', tv).addEventListener('click', async () => {
+      const list = String($('#tv-list', tv).value).split(/[,;\s]+/).map((x) => Math.floor(Number(x))).filter((x) => x > 0);
+      const uniq = [...new Set(list)].sort((a, b) => a - b).slice(0, 10);
+      if (!uniq.length) { toast('Введите тиражи через запятую', 'error'); return; }
+      const btn = $('#tv-run', tv);
+      btn.disabled = true;
+      try {
+        const out = [];
+        for (const t of uniq) {
+          const r = t === cur ? lastResult : await api('/api/calc/' + type, { method: 'POST', body: { ...lastParams, tiraj: t } });
+          out.push({ tiraj: t, priceTotal: r.priceTotal, pricePerItem: r.pricePerItem, cost: r.cost });
+        }
+        lastResult.tirajVariants = out;
+        renderTirajVariants();
+      } catch (e) { toastErr(e); btn.disabled = false; }
+    });
+    const clr = $('#tv-clear', tv);
+    if (clr) clr.addEventListener('click', () => { delete lastResult.tirajVariants; renderTirajVariants(); });
+  }
+
+  // Техкарта под результатом: на всю ширину страницы
+  function renderTechcard(result) {
+    const panel = $('#calc-techcard', box);
+    const tc = result && result.techcard;
+    panel.classList.toggle('hidden', !tc);
+    $('#calc-techcard-body', box).innerHTML = tc ? techcardHTML(tc) : '';
   }
 
   function orderPayload() {
@@ -468,6 +526,8 @@ views.calc = async function (box, arg, query) {
     lastResult = lastParams = null;
     setSaveEnabled(false);
     resultBox.innerHTML = '<div class="muted">Заполните параметры и нажмите «Рассчитать»</div>';
+    renderTechcard(null);
+    renderTirajVariants();
     renderForm();
     renderExtraOps();
   }));
@@ -481,8 +541,9 @@ views.calc = async function (box, arg, query) {
   if (btnUpd) btnUpd.addEventListener('click', async () => {
     if (!lastResult) return;
     try {
-      await api('/api/orders/' + order.id, { method: 'PUT', body: orderPayload() });
+      const r = await api('/api/orders/' + order.id, { method: 'PUT', body: orderPayload() });
       toast(`Заказ № ${order.number} обновлён`, 'ok');
+      opsToast(r);
       navigate('#/orders/' + order.id);
     } catch (e) { toastErr(e); }
   });
@@ -527,7 +588,7 @@ function printKP(order, calc, params) {
     <div class="kp">
       <div class="kp-head">
         <div>
-          <img src="/logo.webp" alt="raduga">
+          <img src="./logo.webp" alt="raduga">
           <div><b>${esc(COMPANY.brand)}</b></div>
           <div class="kp-slogan">${esc(COMPANY.slogan)}</div>
         </div>
@@ -568,6 +629,16 @@ function printKP(order, calc, params) {
         </tbody>
       </table>
 
+      ${calc.tirajVariants && calc.tirajVariants.length ? `
+        <div class="kp-block"><b class="kp-cap">Стоимость при других тиражах</b>
+          <table>
+            <thead><tr><th>Тираж, экз.</th><th>Цена за экз.</th><th>Сумма</th></tr></thead>
+            <tbody>${calc.tirajVariants.map((v) => `
+              <tr${Number(v.tiraj) === Number(qty) ? ' style="font-weight:700"' : ''}><td class="num">${fmtNum(v.tiraj)}</td>
+                <td class="num">${fmtMoney(v.pricePerItem)}</td><td class="num">${fmtMoney(v.priceTotal)}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>` : ''}
+
       ${calc.extraOps && calc.extraOps.length ? `
         <div class="kp-block"><b class="kp-cap">В стоимость включены дополнительные операции</b>
           <div class="kp-params">${calc.extraOps.map((o) =>
@@ -594,9 +665,17 @@ function printKP(order, calc, params) {
 
 /* ================= ТЕХЗАДАНИЕ ДЛЯ ПРОИЗВОДСТВА ================= */
 /* Печатный наряд без цен: параметры по участкам + данные расчёта + чек-лист этапов */
-function printTechTask(order, calc, params) {
+async function printTechTask(order, calc, params) {
   calc = calc && Object.keys(calc).length ? calc : safeParse(order.calc_json);
   params = params || safeParse(order.params_json);
+  // Техкарта: из снимка расчёта, а для старых заказов строим по сохранённым параметрам
+  let tc = calc.techcard && calc.techcard.ok !== false ? calc.techcard : null;
+  if (!tc && typeof techcardForOrder === 'function') {
+    const r = await techcardForOrder(order, calc, params);
+    tc = r && r.tc && r.tc.ok !== false ? r.tc : null;
+  }
+  // Материалы для цеха: по техкарте (реальный расход), иначе из расчёта
+  const mats = tc ? techcardMaterials(tc) : (calc.materials || []);
   const d = new Date();
   const dateStr = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
   const t = state.schema && state.schema.types.find((x) => x.key === order.product_type);
@@ -629,7 +708,7 @@ function printTechTask(order, calc, params) {
     <div class="kp tz">
       <div class="kp-head">
         <div>
-          <img src="/logo.webp" alt="raduga">
+          <img src="./logo.webp" alt="raduga">
         </div>
         <div class="kp-requisites">
           <b>ТЕХНИЧЕСКОЕ ЗАДАНИЕ</b><br>
@@ -654,13 +733,13 @@ function printTechTask(order, calc, params) {
 
       ${details ? `<div class="kp-block"><b class="kp-cap">Технологические данные расчёта</b><div class="kp-params">${details}</div></div>` : ''}
 
-      ${calc.materials && calc.materials.length ? `
-        <div class="kp-block"><b class="kp-cap">Материалы на тираж</b>
+      ${mats.length ? `
+        <div class="kp-block"><b class="kp-cap">Материалы на тираж${tc ? ' (выдать в цех)' : ''}</b>
           <table class="tz-stages">
-            <tr><th>Материал</th><th>Кол-во</th><th>Ед.</th><th>Назначение</th></tr>
-            ${calc.materials.map((mt) => `
+            <tr><th>Материал</th><th>Кол-во</th><th>Ед.</th>${mats.some((x) => x.kg) ? '<th>≈ кг</th>' : ''}<th>Назначение</th></tr>
+            ${mats.map((mt) => `
               <tr><td>${esc(mt.name)}</td><td>${fmtNum(Math.ceil(mt.qty * 100) / 100)}</td>
-                  <td>${esc(mt.unit)}</td><td>${esc(mt.what || '')}</td></tr>`).join('')}
+                  <td>${esc(mt.unit)}</td>${mats.some((x) => x.kg) ? `<td>${mt.kg ? fmtNum(mt.kg) : ''}</td>` : ''}<td>${esc(mt.what || '')}</td></tr>`).join('')}
           </table>
         </div>` : ''}
 
@@ -677,6 +756,7 @@ function printTechTask(order, calc, params) {
 
       ${order.notes ? `<div class="kp-block"><b class="kp-cap">Заметки менеджера</b>${esc(order.notes)}</div>` : ''}
 
+      ${tc ? techcardPrintHTML(tc) : `
       <div class="kp-block"><b class="kp-cap">Отметки о выполнении</b>
         <table class="tz-stages">
           <tr><th>Участок</th><th>Дата</th><th>Исполнитель</th><th>Подпись</th></tr>
@@ -685,7 +765,7 @@ function printTechTask(order, calc, params) {
           <tr><td>Переплёт / отделка</td><td></td><td></td><td></td></tr>
           <tr><td>Упаковка / ОТК</td><td></td><td></td><td></td></tr>
         </table>
-      </div>
+      </div>`}
 
       <div class="kp-sign">
         <div>Задание выдал: ${esc(order.manager_name || state.user.name)}</div>

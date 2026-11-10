@@ -82,9 +82,22 @@ views.orders = async function (box) {
           ${managerOptions()}
         </select>
       </div>
-      <button class="btn btn-primary" id="btn-new-order">+ Новый заказ</button>
+      <div class="toolbar">
+        <button class="btn" id="btn-orders-csv" title="Выгрузить заказы с текущими фильтрами">Выгрузить в Excel</button>
+        <button class="btn btn-primary" id="btn-new-order">+ Новый заказ</button>
+      </div>
     </div>
     <div id="orders-body"><div class="empty-note">Загрузка…</div></div>`;
+  $('#btn-orders-csv', box).addEventListener('click', async () => {
+    try {
+      const list = await fetchOrders();
+      downloadCSV(`заказы-${todayISO()}.csv`,
+        ['Номер', 'Создан', 'Клиент', 'Название', 'Вид продукции', 'Статус', 'Тираж', 'Цена, ₽', 'Себестоимость, ₽', 'Срок', 'Менеджер', 'Заданий выполнено'],
+        list.map((o) => [o.number, fmtDate(o.created_at), o.client_name || '', o.title || '', typeLabel(o.product_type), statusLabel(o.status),
+          o.quantity || 0, o.price || 0, o.cost || 0, fmtDate(o.due_date), o.manager_name || '',
+          o.ops_total ? `${o.ops_done} из ${o.ops_total}` : '']));
+    } catch (e) { toastErr(e); }
+  });
 
   $('#ord-manager', box).value = '';
   const body = $('#orders-body', box);
@@ -139,7 +152,8 @@ views.orders = async function (box) {
         const id = e.dataTransfer.getData('text/plain');
         if (!id) return;
         try {
-          await api('/api/orders/' + id, { method: 'PUT', body: { status: col.dataset.status } });
+          const r = await api('/api/orders/' + id, { method: 'PUT', body: { status: col.dataset.status } });
+          opsToast(r);
           await refresh();
         } catch (err) { toastErr(err); }
       });
@@ -201,101 +215,23 @@ views.orders = async function (box) {
 };
 
 
-/* ================= ПРОИЗВОДСТВО: очередь заданий ================= */
+/* Производство (очереди участков, мои задания, журнал) — public/floor.js */
 
-views.production = async function (box) {
-  await Promise.all([loadUsers(), loadSchema().catch(() => null)]);
-  const STAGES = [
-    { key: 'print', label: 'Печать' },
-    { key: 'postpress', label: 'Постпечать' },
-    { key: 'binding', label: 'Переплёт / отделка' },
-    { key: 'done', label: 'Выполнено' },
-  ];
-
-  box.innerHTML = `
-    <div class="page-head">
-      <span class="muted small">Заказы в статусе «Производство». Перетаскивайте карточки по участкам;
-        из «Выполнено» заказ переводится в «Готов» одной кнопкой.</span>
-    </div>
-    <div id="prod-body"><div class="empty-note">Загрузка…</div></div>`;
-  const body = $('#prod-body', box);
-
-  function cardHTML(o) {
-    return `
-      <div class="kb-card" draggable="true" data-id="${o.id}">
-        <div class="kb-num"><span>№ ${esc(o.number)}</span><span>${orderDueHTML(o.due_date)}</span></div>
-        <div class="kb-title">${esc(o.title || typeLabel(o.product_type))}</div>
-        <div class="kb-client">${esc(typeLabel(o.product_type) || '')} · ${fmtNum(o.quantity || 0)} экз.</div>
-        <div class="kb-foot">
-          <span>${esc(o.manager_name || '')}</span>
-          <button class="btn btn-sm prod-tz" data-id="${o.id}" title="Распечатать техзадание">ТЗ</button>
-        </div>
-      </div>`;
-  }
-
-  async function refresh() {
-    const orders = (await api('/api/orders?status=production'))
-      .sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1);
-    const cols = STAGES.map((st) => {
-      const list = orders.filter((o) => (o.prod_stage || 'print') === st.key);
-      return `
-        <div class="kb-col" data-stage="${st.key}">
-          <div class="kb-col-head"><span>${st.label}</span><span class="cnt">${list.length}</span></div>
-          <div class="kb-cards">${list.map(cardHTML).join('')}
-            ${st.key === 'done' && list.length ? `<button class="btn btn-sm btn-block" id="btn-all-ready">Все выполненные → «Готов»</button>` : ''}
-          </div>
-        </div>`;
-    }).join('');
-    body.innerHTML = orders.length
-      ? `<div class="kanban prod-board">${cols}</div>`
-      : '<div class="panel empty-note">Нет заказов в производстве. Переведите заказ в статус «Производство» — он появится в очереди печати.</div>';
-
-    $$('.kb-card', body).forEach((card) => {
-      card.addEventListener('click', (e) => {
-        if (e.target.closest('.prod-tz')) return;
-        navigate('#/orders/' + card.dataset.id);
-      });
-      card.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData('text/plain', card.dataset.id);
-        e.dataTransfer.effectAllowed = 'move';
-        card.classList.add('dragging');
-      });
-      card.addEventListener('dragend', () => card.classList.remove('dragging'));
-    });
-    $$('.prod-tz', body).forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const o = orders.find((x) => String(x.id) === btn.dataset.id);
-        if (o) printTechTask(o);
-      });
-    });
-    $$('.kb-col', body).forEach((col) => {
-      col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
-      col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
-      col.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        col.classList.remove('drag-over');
-        const id = e.dataTransfer.getData('text/plain');
-        if (!id) return;
-        try {
-          await api('/api/orders/' + id, { method: 'PUT', body: { prod_stage: col.dataset.stage } });
-          await refresh();
-        } catch (err) { toastErr(err); }
-      });
-    });
-    const allReady = $('#btn-all-ready', body);
-    if (allReady) allReady.addEventListener('click', async () => {
-      const done = orders.filter((o) => o.prod_stage === 'done');
-      try {
-        for (const o of done) await api('/api/orders/' + o.id, { method: 'PUT', body: { status: 'ready' } });
-        toast(`Переведено в «Готов»: ${done.length}`, 'ok');
-        await refresh();
-      } catch (err) { toastErr(err); }
+// Сообщение после передачи заказа в производство: сколько заданий получили участки
+function opsToast(r) {
+  const ops = r && r.ops;
+  if (ops && ops.ok && ops.created) toast(`Участки получили задания по техкарте: ${ops.created}`, 'ok');
+  else if (ops && !ops.ok && ops.reason) toast(ops.reason, 'error');
+  if (r && r.priceKept) toast('Цена зафиксирована: пересчёт её не изменил', 'ok');
+  // проверка при запуске в производство: не блокирует, а подсказывает
+  if (r && r.warnings && r.warnings.length) {
+    openModal({
+      title: 'Заказ в производстве. Проверьте:',
+      body: `<ul class="launch-warn">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
+        <div class="muted small" style="margin-top:10px">Это подсказки, заказ уже передан в цех. Если всё верно, просто закройте окно.</div>`,
     });
   }
-
-  await refresh();
-};
+}
 
 /* ================= КАРТОЧКА ЗАКАЗА ================= */
 
@@ -322,15 +258,24 @@ views.order = async function (box, id) {
         <button class="btn" id="btn-recalc">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           ${order.product_type ? 'Пересчитать / изменить калькуляцию' : 'Создать калькуляцию'}</button>
-        ${calc && calc.materials && calc.materials.length ? `<button class="btn" id="btn-writeoff" title="Списать материалы тиража со склада">
+        ${calc && ((calc.materials && calc.materials.length) || calc.techcard) ? `<button class="btn" id="btn-writeoff" title="Списать материалы тиража со склада">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
           Списать материалы</button>` : ''}
+        ${calc && (calc.techcard || (calc.materials && calc.materials.length)) ? `<button class="btn" id="btn-mat-request" title="Сравнить потребность заказа со складом и заказать недостающее">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+          Заявка на материалы</button>` : ''}
+        ${order.product_type ? `<button class="btn" id="btn-reprint" title="Повтор заказа из-за брака или недовложения: клиенту бесплатно">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Перепечатка</button>` : ''}
         ${b24on ? `<button class="btn" id="btn-b24" title="Создать сделку в Битрикс24">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           В Битрикс24</button>` : ''}
         ${isAdmin ? '<button class="btn btn-danger" id="btn-del-order">Удалить</button>' : ''}
       </div>
     </div>
+    ${order.reprint_of ? `<div class="warn-box">Это перепечатка к заказу <a href="#/orders/${order.reprint_of}"><b>№ ${esc(order.reprint_of_number || '')}</b></a>: клиенту бесплатно, цена 0 ₽, затраты видны в себестоимости.</div>` : ''}
+    ${order.reprints && order.reprints.length ? `<div class="warn-box">Перепечатки по заказу: ${order.reprints.map((r) =>
+      `<a href="#/orders/${r.id}"><b>№ ${esc(r.number)}</b></a> (${fmtNum(r.quantity)} экз., ${esc(statusLabel(r.status))})`).join(', ')}</div>` : ''}
     <div class="order-grid">
       <div>
         <div class="panel panel-pad">
@@ -343,14 +288,17 @@ views.order = async function (box, id) {
               <select name="manager_id"><option value="">—</option>${managerOptions(order.manager_id)}</select></label>
             <label class="fld"><span>Статус</span>
               <select name="status">${STATUSES.map((s) => `<option value="${s.key}" ${s.key === order.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>
-            <label class="fld"><span>Этап производства</span>
-              <select name="prod_stage">${PROD_STAGES.map((s) => `<option value="${s.key}" ${s.key === (order.prod_stage || '') ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>
+            ${order.ops && order.ops.length ? '' : `<label class="fld"><span>Этап производства</span>
+              <select name="prod_stage">${PROD_STAGES.map((s) => `<option value="${s.key}" ${s.key === (order.prod_stage || '') ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>`}
             <label class="fld"><span>Срок сдачи</span><input name="due_date" type="date" value="${esc(order.due_date)}"></label>
             <label class="fld"><span>Тираж, экз.</span><input name="quantity" type="number" min="0" value="${order.quantity || 0}"></label>
-            <label class="fld"><span>Цена за тираж, ₽</span><input name="price" type="number" min="0" step="0.01" value="${order.price || 0}"></label>
+            <label class="fld"><span>Цена за тираж, ₽${order.price_locked ? ' 🔒' : ''}</span><input name="price" type="number" min="0" step="0.01" value="${order.price || 0}"></label>
             <label class="fld"><span>Себестоимость, ₽</span><input name="cost" type="number" min="0" step="0.01" value="${order.cost || 0}"></label>
             <label class="fld"><span>Вид продукции</span><input type="text" value="${esc(typeLabel(order.product_type))}" disabled></label>
             <label class="fld span2"><span>Заметки</span><textarea name="notes" rows="3">${esc(order.notes)}</textarea></label>
+            <label class="check-fld span2" title="Цена согласована с клиентом: пересчёт калькуляции не изменит её (менять можно вручную)">
+              <input type="checkbox" name="price_locked" ${order.price_locked ? 'checked' : ''}>
+              <span>Цена согласована с клиентом: пересчёт её не меняет</span></label>
           </form>
           <div class="toolbar" style="margin-top:14px;justify-content:space-between">
             <span class="muted small">Клиент: ${order.client_id ? `<a href="#/clients/${order.client_id}">${esc(order.client_name || '')}</a>` : '—'}
@@ -385,7 +333,33 @@ views.order = async function (box, id) {
             </ul>` : '<div class="muted">Пока пусто</div>'}
         </div>
       </div>
+    </div>
+    <div class="panel panel-pad ${order.ops && order.ops.length || order.status === 'production' ? '' : 'hidden'}" id="order-floor" style="margin-top:16px">
+      <h3>Производство: задания участкам</h3>
+      <div id="order-floor-body">${orderOpsPanelHTML(order)}</div>
+    </div>
+    <div class="panel panel-pad hidden" id="order-techcard" style="margin-top:16px">
+      <h3>Техкарта: маршрут по участкам</h3>
+      <div id="order-techcard-body"></div>
     </div>`;
+
+  // техкарта (для старых заказов строится по сохранённым параметрам)
+  let orderTc = null;
+  techcardForOrder(order, calc, params).then((r) => {
+    if (!r || !r.tc) return;
+    orderTc = r.tc.ok !== false ? r.tc : null;
+    const panel = $('#order-techcard', box);
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    // статусы заданий цеха поверх схемы маршрута
+    const status = {};
+    for (const op of order.ops || []) status[op.op_key] = op.status;
+    $('#order-techcard-body', box).innerHTML = techcardHTML(r.tc, {
+      subtitle: r.fresh ? 'Заказ рассчитан до появления техкарт, поэтому она построена по его параметрам и текущим настройкам. Чтобы сохранить её в заказе, нажмите «Пересчитать» и «Обновить заказ».' : '',
+      status: (order.ops || []).length && !r.fresh ? status : null,
+    });
+  });
+  bindOrderOpsPanel($('#order-floor', box), order, () => renderRoute());
 
   // калькуляция
   const calcBox = $('#calc-content', box);
@@ -455,7 +429,7 @@ views.order = async function (box, id) {
   $('#btn-save-order', box).addEventListener('click', async () => {
     const f = new FormData($('#order-form', box));
     try {
-      await api('/api/orders/' + id, {
+      const saved = await api('/api/orders/' + id, {
         method: 'PUT',
         body: {
           title: f.get('title'), client_id: Number(f.get('client_id')) || null,
@@ -463,9 +437,11 @@ views.order = async function (box, id) {
           due_date: f.get('due_date') || '', quantity: Number(f.get('quantity')) || 0,
           price: Number(f.get('price')) || 0, cost: Number(f.get('cost')) || 0,
           notes: f.get('notes') || '', prod_stage: f.get('prod_stage') ?? undefined,
+          price_locked: !!f.get('price_locked'),
         },
       });
       toast('Заказ сохранён', 'ok');
+      opsToast(saved);
       renderRoute();
     } catch (e) { toastErr(e); }
   });
@@ -485,7 +461,9 @@ views.order = async function (box, id) {
       const wasBefore = (order.log || []).some((l) => (l.event || '').startsWith('Склад: списание'));
       if (wasBefore && !await confirmDlg('По этому заказу уже было списание со склада. Списать ещё раз?', 'Списать')) return;
       const stock = await api('/api/stock');
-      const rows = (calc.materials || []).map((mt) => ({
+      // по техкарте: реальный расход для цеха (без наценки, заложенной в объём бумаги)
+      const srcMats = orderTc ? techcardMaterials(orderTc) : (calc.materials || []);
+      const rows = srcMats.map((mt) => ({
         mt, s: stock.find((x) => x.name === mt.name) || null,
         need: Math.ceil(mt.qty * 100) / 100,
       }));
@@ -508,6 +486,7 @@ views.order = async function (box, id) {
             </tbody>
           </table></div>
           <div class="muted small" style="margin-top:10px">
+            ${orderTc ? 'Количества взяты из техкарты: реальный расход для цеха, без наценки, заложенной в объём бумаги в прайсе. ' : ''}
             Списание попадёт в историю заказа и в движения склада. Отрицательный остаток допускается —
             это сигнал, что материал надо оприходовать.</div>`,
         footer: `<button class="btn" data-act="cancel">Отмена</button>
@@ -536,6 +515,68 @@ views.order = async function (box, id) {
           if (done) { toast(`Списано позиций: ${done}`, 'ok'); renderRoute(); }
           else toast('Нечего списывать', 'error');
         } catch (e) { toastErr(e); woSaveBtn.disabled = false; }
+      };
+    } catch (e) { toastErr(e); }
+  });
+
+  // перепечатка: новый заказ «№/П1» с теми же параметрами, клиенту бесплатно
+  const rpBtn = $('#btn-reprint', box);
+  if (rpBtn) rpBtn.addEventListener('click', () => {
+    const m = openModal({
+      title: 'Перепечатка заказа № ' + order.number,
+      body: `<form id="rp-form" style="display:flex;flex-direction:column;gap:13px">
+        <div class="muted small">Создастся новый заказ с теми же параметрами и ценой 0 ₽: брак или недовложение не оплачиваются клиентом,
+          а затраты видны в себестоимости. Его можно сразу передать в производство.</div>
+        <label class="fld"><span>Тираж перепечатки, экз.</span><input name="tiraj" type="number" min="1" value="${order.quantity || 1}"></label>
+        <label class="fld"><span>Причина</span><input name="reason" type="text" placeholder="Например: брак ламинации, 40 обложек"></label>
+      </form>`,
+      footer: `<button class="btn" data-act="cancel">Отмена</button><button class="btn btn-primary" data-act="ok">Создать перепечатку</button>`,
+    });
+    $('[data-act="cancel"]', m.foot).onclick = m.close;
+    $('[data-act="ok"]', m.foot).onclick = async () => {
+      const f = new FormData($('#rp-form', m.body));
+      try {
+        const r = await api(`/api/orders/${order.id}/reprint`, { method: 'POST', body: { tiraj: Number(f.get('tiraj')) || 0, reason: f.get('reason') || '' } });
+        m.close();
+        toast(`Перепечатка № ${r.number} создана`, 'ok');
+        navigate('#/orders/' + r.id);
+      } catch (e) { toastErr(e); }
+    };
+  });
+
+  // заявка на материалы: потребность заказа (по техкарте) против склада → закупка недостающего
+  const mrBtn = $('#btn-mat-request', box);
+  if (mrBtn) mrBtn.addEventListener('click', async () => {
+    try {
+      const [stock] = await Promise.all([api('/api/stock'), loadSuppliers().catch(() => null)]);
+      const need = orderTc ? techcardMaterials(orderTc) : (calc.materials || []);
+      const rows = need.map((mt) => {
+        const st = stock.find((x) => x.name === mt.name) || null;
+        const qty = Math.ceil(mt.qty * 100) / 100;
+        const lack = st ? Math.max(0, Math.ceil(qty - st.qty)) : null;
+        return { mt, st, qty, lack };
+      });
+      const toBuy = rows.filter((r) => r.st && r.lack > 0);
+      const m = openModal({
+        title: 'Заявка на материалы: заказ № ' + order.number,
+        wide: true,
+        body: `<div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>Материал</th><th class="num">Нужно</th><th class="num">На складе</th><th class="num">Не хватает</th></tr></thead>
+          <tbody>${rows.map((r) => `<tr><td><b>${esc(r.mt.name)}</b> <span class="muted small">${esc(r.mt.what || '')}</span></td>
+            <td class="num">${fmtNum(r.qty)} ${esc(r.mt.unit)}${r.mt.kg ? `<div class="muted small">≈ ${fmtNum(r.mt.kg)} кг</div>` : ''}</td>
+            <td class="num">${r.st ? fmtNum(r.st.qty) : '<span class="overdue">нет в справочнике склада</span>'}</td>
+            <td class="num">${r.lack ? `<b class="overdue">${fmtNum(r.lack)}</b>` : r.st ? '<span class="tc-ok">хватает</span>' : ''}</td></tr>`).join('')}</tbody>
+        </table></div>
+        <div class="muted small" style="margin-top:10px">${orderTc ? 'Потребность по техкарте: реальный расход для цеха. ' : ''}Остаток склада общий: другие заказы в работе тоже его используют.</div>`,
+        footer: `<button class="btn" data-act="cancel">Закрыть</button>
+          ${toBuy.length ? `<button class="btn btn-primary" data-act="buy">Создать закупку недостающего (${toBuy.length})</button>` : ''}`,
+      });
+      $('[data-act="cancel"]', m.foot).onclick = m.close;
+      const buy = $('[data-act="buy"]', m.foot);
+      if (buy) buy.onclick = () => {
+        m.close();
+        newPurchaseDialog({ items: toBuy.map((r) => ({ material_id: r.st.id, qty: r.lack, price: r.st.last_price || 0,
+          notes: 'для заказа № ' + order.number })) });
       };
     } catch (e) { toastErr(e); }
   });
@@ -1178,7 +1219,7 @@ function printPurchaseForm(p) {
     <div class="kp">
       <div class="kp-head">
         <div>
-          <img src="/logo.webp" alt="raduga">
+          <img src="./logo.webp" alt="raduga">
           <div><b>${esc(COMPANY.brand)}</b></div>
           <div class="kp-slogan">${esc(COMPANY.slogan)}</div>
         </div>
@@ -1864,12 +1905,13 @@ views.settings = async function (box, arg, query) {
       <button data-tab="pricing">Настройки калькуляции</button>
       <button data-tab="ops">Доп. операции</button>
       <button data-tab="calcs">Конструктор</button>
+      <button data-tab="production">Производство</button>
       <button data-tab="integrations">Интеграции</button>
     </div>
     <div id="settings-body"></div>`;
   const body = $('#settings-body', box);
   const wanted = query && query.get('tab');
-  let tab = ['users', 'pricing', 'ops', 'calcs', 'integrations'].includes(wanted) ? wanted : 'users';
+  let tab = ['users', 'pricing', 'ops', 'calcs', 'production', 'integrations'].includes(wanted) ? wanted : 'users';
   $$('.settings-tabs button', box).forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
 
   $$('.settings-tabs button', box).forEach((b) => b.addEventListener('click', () => {
@@ -1878,8 +1920,11 @@ views.settings = async function (box, arg, query) {
     render();
   }));
 
-  function userDialog(user) {
+  async function userDialog(user) {
     const u = user || {};
+    let floorAreas = [];
+    try { floorAreas = (await api('/api/floor/areas')).areas.filter((a) => a.kind !== 'outsource'); } catch { /* нет справочника */ }
+    const myAreas = new Set(u.areas || []);
     const m = openModal({
       title: user ? 'Пользователь: ' + user.name : 'Новый пользователь',
       body: `
@@ -1888,9 +1933,13 @@ views.settings = async function (box, arg, query) {
           <label class="fld"><span>Имя *</span><input name="name" type="text" value="${esc(u.name || '')}" required></label>
           <label class="fld"><span>Роль</span>
             <select name="role">
-              <option value="manager" ${u.role !== 'admin' ? 'selected' : ''}>Менеджер</option>
-              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Руководитель</option>
+              ${['manager', 'admin', 'master', 'worker'].map((r) =>
+                `<option value="${r}" ${(u.role || 'manager') === r ? 'selected' : ''}>${roleLabel(r)}</option>`).join('')}
             </select></label>
+          <div class="muted small" data-role-hint></div>
+          <div class="fld" data-areas-box><span>Участки сотрудника (видит и отмечает задания только этих участков)</span>
+            <div class="op-calcs">${floorAreas.map((a) => `<label class="check-fld"><input type="checkbox" name="area" value="${esc(a.id)}"
+              ${myAreas.has(a.id) ? 'checked' : ''}><span>${esc(a.name)}</span></label>`).join('') || '<span class="muted">Справочник участков пуст</span>'}</div></div>
           ${user ? `
             <label class="check-fld"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}><span>Активен (может входить в систему)</span></label>
             <label class="fld"><span>Новый пароль (оставьте пустым — без изменений)</span><input name="password" type="password" autocomplete="new-password"></label>`
@@ -1900,19 +1949,34 @@ views.settings = async function (box, arg, query) {
                <button class="btn btn-primary" data-act="save">${user ? 'Сохранить' : 'Добавить'}</button>`,
     });
     const form = $('#user-form', m.body);
+    const HINT = {
+      admin: 'Всё, включая настройки, цены и справочники.',
+      manager: 'Заказы, клиенты, калькулятор, КП. Производство только просмотр.',
+      master: 'Как менеджер, плюс управляет цехом: очереди, машины, отметки за сотрудников.',
+      worker: 'Только экран «Мои задания» на своих участках: без цен, клиентов и заказов.',
+    };
+    const syncRole = () => {
+      const r = form.elements.role.value;
+      $('[data-areas-box]', form).classList.toggle('hidden', r !== 'worker');
+      $('[data-role-hint]', form).textContent = HINT[r] || '';
+    };
+    form.elements.role.addEventListener('change', syncRole);
+    syncRole();
     async function submit() {
       if (!form.reportValidity()) return;
       const f = new FormData(form);
+      const areas = $$('input[name="area"]:checked', form).map((c) => c.value);
+      if (f.get('role') === 'worker' && !areas.length) { toast('Отметьте участки сотрудника', 'error'); return; }
       try {
         if (user) {
           await api('/api/users/' + user.id, {
             method: 'PUT',
-            body: { name: f.get('name'), role: f.get('role'), active: !!f.get('active'), password: f.get('password') || undefined },
+            body: { name: f.get('name'), role: f.get('role'), active: !!f.get('active'), password: f.get('password') || undefined, areas },
           });
         } else {
           await api('/api/users', {
             method: 'POST',
-            body: { login: f.get('login'), name: f.get('name'), role: f.get('role'), password: f.get('password') },
+            body: { login: f.get('login'), name: f.get('name'), role: f.get('role'), password: f.get('password'), areas },
           });
         }
         m.close();
@@ -1941,7 +2005,7 @@ views.settings = async function (box, arg, query) {
               <tr data-id="${u.id}" ${u.active ? '' : 'style="opacity:.55"'}>
                 <td><b>${esc(u.name)}</b></td>
                 <td class="mono">${esc(u.login)}</td>
-                <td>${u.role === 'admin' ? 'Руководитель' : 'Менеджер'}</td>
+                <td>${roleLabel(u.role)}${u.role === 'worker' && u.areas && u.areas.length ? ` <span class="muted small">· участков: ${u.areas.length}</span>` : ''}</td>
                 <td>${u.active ? '<span class="badge st-ready">Активен</span>' : '<span class="badge st-cancelled">Отключён</span>'}</td>
                 <td style="width:120px"><button class="btn btn-sm u-edit">Изменить</button></td>
               </tr>`).join('')}
@@ -2693,11 +2757,207 @@ views.settings = async function (box, arg, query) {
     });
   }
 
+  /* --- Производство: участки, оборудование, операции и нормы (из них строится техкарта) --- */
+  async function renderProduction() {
+    let P = await api('/api/production');
+    const KIND = { own: 'Свой участок', outsource: 'Подряд (на стороне)' };
+    const PK = { '': '—', offset: 'Офсет', toner: 'Цифра цветная', inkjet: 'Струйная', bw: 'Цифра ч/б' };
+    const NUM = {
+      areas: ['manHour'],
+      machines: ['a3PerSheet', 'setupMin', 'perHour', 'hourRate'],
+      ops: ['setupMin', 'perHour', 'people'],
+    };
+    const NULLABLE = { ops: ['setupMin', 'perHour'] }; // пусто = нормы машины
+    const approx = (r) => (r.approx ? ' <span class="badge-approx" title="Примерная норма для старта: замените на свою">примерно</span>' : '');
+    const val = (v) => (v === null || v === undefined ? '' : esc(v));
+    const areaOpts = (sel) => P.areas.map((a) =>
+      `<option value="${esc(a.id)}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+    const machineOpts = (areaId, sel) => `<option value="">— вручную, без машины —</option>` +
+      P.machines.filter((m) => m.areaId === areaId).map((m) =>
+        `<option value="${esc(m.id)}" ${m.id === sel ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
+    const inp = (k, i, f, v, cls = 'pr-in', attrs = '') =>
+      `<input type="${NUM[k] && NUM[k].includes(f) ? 'number' : 'text'}" step="any" min="0" class="${cls}"
+        data-k="${k}" data-i="${i}" data-f="${f}" value="${val(v)}" ${attrs}>`;
+    const sel = (k, i, f, opts) => `<select class="pr-sel" data-k="${k}" data-i="${i}" data-f="${f}">${opts}</select>`;
+
+    function draw() {
+      const ops = P.ops.map((o, i) => {
+        const m = P.machines.find((x) => x.id === o.machineId);
+        return `<tr>
+          <td>${inp('ops', i, 'name', o.name, 'pr-name')}</td>
+          <td>${sel('ops', i, 'areaId', areaOpts(o.areaId))}</td>
+          <td>${sel('ops', i, 'machineId', machineOpts(o.areaId, o.machineId))}</td>
+          <td class="muted">${esc(o.unit)}</td>
+          <td>${inp('ops', i, 'setupMin', o.setupMin, 'pr-in', `placeholder="${m ? 'машина: ' + esc(m.setupMin) : '0'}"`)}</td>
+          <td>${inp('ops', i, 'perHour', o.perHour, 'pr-in', `placeholder="${m ? 'машина: ' + esc(m.perHour) : '0'}"`)}</td>
+          <td>${m ? '<span class="muted small">—</span>' : inp('ops', i, 'people', o.people, 'pr-in pr-xs')}</td>
+          <td>${o.optional ? `<label class="check-fld"><input type="checkbox" data-k="ops" data-i="${i}" data-f="active" ${o.active !== false ? 'checked' : ''}><span></span></label>` : '<span class="muted small" title="У операции своя цена в прайсе, выключать нельзя">всегда</span>'}</td>
+          <td>${approx(o)}</td>
+        </tr>`;
+      }).join('');
+
+      body.innerHTML = `<div id="pr-root">
+        <div class="page-head">
+          <h2>Производство: участки, оборудование, нормы</h2>
+          <div class="toolbar">
+            <button class="btn" id="pr-reset">Вернуть начальные</button>
+            <button class="btn btn-primary" id="pr-save">Сохранить</button>
+          </div>
+        </div>
+        <p class="muted small prod-intro">Из этого справочника строится техкарта заказа: какие операции, на каком участке
+          и машине, сколько времени. <b>Время операции = приладка × число приладок + объём / выработка в час.</b>
+          Нормы с пометкой «примерно» заполнены для старта, замените их на свои. Плановая себестоимость считается,
+          когда указана стоимость машино-часа (для машин) или человеко-часа (для ручных участков).</p>
+
+        <div class="panel panel-pad cfg-section">
+          <h4>Участки</h4>
+          <div class="tbl-wrap"><table class="tbl pr-tbl">
+            <thead><tr><th>Участок</th><th>Тип</th><th>Очередь заданий</th><th>Человеко-час, ₽</th><th>Примечание</th><th></th></tr></thead>
+            <tbody>${P.areas.map((a, i) => `<tr>
+              <td>${inp('areas', i, 'name', a.name, 'pr-name')}</td>
+              <td>${sel('areas', i, 'kind', Object.entries(KIND).map(([k, l]) => `<option value="${k}" ${a.kind === k ? 'selected' : ''}>${l}</option>`).join(''))}</td>
+              <td>${sel('areas', i, 'queue', [['manual', 'ставит мастер'], ['auto', 'по сроку сдачи']].map(([k, l]) => `<option value="${k}" ${(a.queue || 'manual') === k ? 'selected' : ''}>${l}</option>`).join(''))}</td>
+              <td>${inp('areas', i, 'manHour', a.manHour)}</td>
+              <td>${inp('areas', i, 'note', a.note || '', 'pr-note')}</td>
+              <td><button class="btn btn-ghost btn-sm" data-del="areas:${i}" title="Удалить участок">✕</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+          <button class="btn btn-sm" id="pr-add-area" style="margin-top:10px">+ Участок</button>
+        </div>
+
+        <div class="panel panel-pad cfg-section">
+          <h4>Оборудование</h4>
+          <p class="muted small" style="margin-bottom:8px">«А3 на листе»: сколько условных листов А3 (от А3 до 330×487) помещается на печатный
+            лист машины; калькуляция ведётся в условных А3, для офсета обычно 2. Выработка: в единицах операции в час
+            (для печати: прогонов печатного листа в час).</p>
+          <div class="tbl-wrap"><table class="tbl pr-tbl">
+            <thead><tr><th>Машина</th><th>Участок</th><th>Вид печати</th><th>А3 на листе</th><th>Мин. формат</th><th>Макс. формат</th>
+              <th>Приладка, мин</th><th>Выработка в час</th><th>Машино-час, ₽</th><th></th><th></th></tr></thead>
+            <tbody>${P.machines.map((m, i) => `<tr>
+              <td>${inp('machines', i, 'name', m.name, 'pr-name')}</td>
+              <td>${sel('machines', i, 'areaId', areaOpts(m.areaId))}</td>
+              <td>${sel('machines', i, 'printKind', Object.entries(PK).map(([k, l]) => `<option value="${k}" ${(m.printKind || '') === k ? 'selected' : ''}>${l}</option>`).join(''))}</td>
+              <td>${inp('machines', i, 'a3PerSheet', m.a3PerSheet, 'pr-in pr-xs')}</td>
+              <td>${inp('machines', i, 'minFormat', m.minFormat, 'pr-in pr-fmt', 'placeholder="мм×мм"')}</td>
+              <td>${inp('machines', i, 'maxFormat', m.maxFormat, 'pr-in pr-fmt', 'placeholder="мм×мм"')}</td>
+              <td>${inp('machines', i, 'setupMin', m.setupMin)}</td>
+              <td>${inp('machines', i, 'perHour', m.perHour)}</td>
+              <td>${inp('machines', i, 'hourRate', m.hourRate)}</td>
+              <td>${approx(m)}</td>
+              <td><button class="btn btn-ghost btn-sm" data-del="machines:${i}" title="Удалить машину">✕</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+          <button class="btn btn-sm" id="pr-add-machine" style="margin-top:10px">+ Машина</button>
+        </div>
+
+        <div class="panel panel-pad cfg-section">
+          <h4>Операции и нормы</h4>
+          <p class="muted small" style="margin-bottom:8px">Если у операции выбрана машина и нормы оставлены пустыми, берутся нормы машины.
+            Операции с галочкой «вкл.» можно выключить: в прайсе у них нет своей цены, и они пропадут из техкарты.</p>
+          <div class="tbl-wrap"><table class="tbl pr-tbl">
+            <thead><tr><th>Операция</th><th>Участок</th><th>Машина</th><th>Ед.</th><th>Приладка, мин</th>
+              <th>Выработка в час</th><th>Людей</th><th>Вкл.</th><th></th></tr></thead>
+            <tbody>${ops}</tbody>
+          </table></div>
+        </div>
+
+        <div class="panel panel-pad cfg-section">
+          <h4>Технологический отход бумаги</h4>
+          <table class="cfg-table"><tbody>
+            <tr><td class="k">Цифра и струя, % к чистому тиражу</td>
+              <td><input type="number" step="any" min="0" max="100" id="pr-waste" value="${val(P.waste && P.waste.digitalPct)}">${approx(P.waste || {})}</td></tr>
+            <tr><td class="k">Офсет</td><td class="muted small">как в прайсе: приладка 80 листов на краску + 2% (Настройки калькуляции → Коэффициенты)</td></tr>
+          </tbody></table>
+          <p class="muted small" style="margin-top:6px">В прайсе цифры заложен запас бумаги 30%. Это наценка, поэтому в цех он не передаётся:
+            техкарта и ТЗ показывают чистый тираж плюс этот процент, а разница видна в техкарте строкой «наценка».</p>
+        </div></div>`;
+      bind($('#pr-root', body));
+    }
+
+    function bind(root) {
+      root.oninput = root.onchange = (e) => {
+        const el = e.target;
+        if (el.id === 'pr-waste') {
+          P.waste = { ...(P.waste || {}), digitalPct: el.value === '' ? 0 : Number(el.value), approx: false };
+          return;
+        }
+        const k = el.dataset.k, f = el.dataset.f, i = Number(el.dataset.i);
+        if (!k || !P[k] || !P[k][i]) return;
+        const row = P[k][i];
+        if (el.type === 'checkbox') row[f] = el.checked;
+        else if (NUM[k] && NUM[k].includes(f)) {
+          const s = String(el.value).replace(',', '.').trim();
+          row[f] = s === '' ? (NULLABLE[k] && NULLABLE[k].includes(f) ? null : 0) : Number(s);
+        } else row[f] = el.value;
+        if (f === 'setupMin' || f === 'perHour') row.approx = false;
+        // смена участка: у операции сбрасываем машину чужого участка, перерисовываем списки машин
+        if (e.type === 'change' && f === 'areaId') {
+          if (k === 'ops') {
+            const m = P.machines.find((x) => x.id === row.machineId);
+            if (m && m.areaId !== row.areaId) row.machineId = '';
+          }
+          draw();
+        }
+        if (e.type === 'change' && k === 'ops' && f === 'machineId') draw();
+      };
+
+      $$('[data-del]', body).forEach((btn) => btn.addEventListener('click', async () => {
+        const [k, iStr] = btn.dataset.del.split(':');
+        const i = Number(iStr);
+        if (k === 'areas') {
+          const a = P.areas[i];
+          const busy = P.machines.filter((m) => m.areaId === a.id).length + P.ops.filter((o) => o.areaId === a.id).length;
+          if (busy) { toast(`На участке «${a.name}» есть машины или операции: сначала перенесите их на другой участок`, 'error'); return; }
+          if (!await confirmDlg(`Удалить участок «${a.name}»?`)) return;
+        }
+        if (k === 'machines') {
+          const m = P.machines[i];
+          const used = P.ops.filter((o) => o.machineId === m.id);
+          if (used.length) { toast(`Машина «${m.name}» назначена операциям: ${used.map((o) => o.name).join(', ')}. Сначала выберите им другую машину`, 'error'); return; }
+          if (!await confirmDlg(`Удалить машину «${m.name}»?`)) return;
+        }
+        P[k].splice(i, 1);
+        draw();
+      }));
+
+      $('#pr-add-area', body).addEventListener('click', () => {
+        P.areas.push({ id: '', name: 'Новый участок', kind: 'own', queue: 'manual', manHour: 0, note: '' });
+        draw();
+      });
+      $('#pr-add-machine', body).addEventListener('click', () => {
+        P.machines.push({ id: '', name: 'Новая машина', areaId: P.areas[0] ? P.areas[0].id : '', printKind: '',
+          a3PerSheet: 1, minFormat: '', maxFormat: '', setupMin: 0, perHour: 0, hourRate: 0 });
+        draw();
+      });
+
+      $('#pr-save', body).addEventListener('click', async () => {
+        try {
+          const r = await api('/api/production', { method: 'PUT', body: P });
+          P = r.production;
+          draw();
+          toast('Справочник производства сохранён. Новые расчёты строят техкарту по нему.', 'ok');
+        } catch (e) { toastErr(e); }
+      });
+      $('#pr-reset', body).addEventListener('click', async () => {
+        if (!await confirmDlg('Вернуть начальный справочник производства? Ваши нормы и ставки будут заменены примерными.', 'Вернуть')) return;
+        try {
+          await api('/api/production/reset', { method: 'POST' });
+          P = await api('/api/production');
+          draw();
+          toast('Справочник возвращён к начальному', 'ok');
+        } catch (e) { toastErr(e); }
+      });
+    }
+
+    draw();
+  }
+
   function render() {
     const fn = tab === 'users' ? renderUsers
       : tab === 'pricing' ? renderPricing
       : tab === 'ops' ? renderOps
       : tab === 'calcs' ? renderCalcs
+      : tab === 'production' ? renderProduction
       : renderIntegrations;
     fn().catch((e) => { body.innerHTML = `<div class="form-error">${esc(e.message)}</div>`; });
   }

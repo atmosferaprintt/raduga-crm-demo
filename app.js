@@ -46,6 +46,11 @@ const PROD_STAGES = [
 ];
 function prodStageLabel(key) { const s = PROD_STAGES.find((x) => x.key === key); return s ? s.label : key; }
 
+const ROLE_LABELS = { admin: 'Руководитель', manager: 'Менеджер', master: 'Мастер цеха', worker: 'Сотрудник цеха' };
+function roleLabel(r) { return ROLE_LABELS[r] || 'Менеджер'; }
+const isWorker = () => !!state.user && state.user.role === 'worker';
+const canManageFloor = () => !!state.user && (state.user.role === 'admin' || state.user.role === 'master');
+
 function statusBadge(key) { return `<span class="badge st-${esc(key)}">${esc(statusLabel(key))}</span>`; }
 
 const PURCH_STATUSES = [
@@ -188,9 +193,24 @@ function clientOptions(selectedId) {
   ).join('');
 }
 function managerOptions(selectedId) {
-  return (state.users || []).filter((u) => u.active).map((u) =>
+  return (state.users || []).filter((u) => u.active && u.role !== 'worker').map((u) =>
     `<option value="${u.id}" ${String(u.id) === String(selectedId ?? '') ? 'selected' : ''}>${esc(u.name)}</option>`
   ).join('');
+}
+
+/* Выгрузка таблицы в Excel: CSV с «;» и BOM, Excel открывает его с русскими буквами */
+function downloadCSV(filename, header, rows) {
+  const cell = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+    return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const text = '﻿' + [header, ...rows].map((r) => r.map(cell).join(';')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 function debounce(fn, ms = 300) {
@@ -214,6 +234,7 @@ const PAGE_TITLES = {
   orders: 'Заказы', order: 'Заказ', calc: 'Калькулятор', production: 'Производство', stock: 'Склад',
   purchases: 'Закупки', purchase: 'Закупка',
   clients: 'Клиенты', client: 'Клиент', tasks: 'Задачи', analytics: 'Аналитика', settings: 'Настройки',
+  work: 'Мои задания',
 };
 
 let routeSeq = 0;
@@ -228,6 +249,8 @@ async function renderRoute() {
   if (name === 'clients' && arg) viewName = 'client';
   if (name === 'purchases' && arg) viewName = 'purchase';
   if (name === 'settings' && state.user.role !== 'admin') { navigate('#/orders'); return; }
+  // сотрудник цеха видит только свои задания
+  if (isWorker() && name !== 'work') { navigate('#/work'); return; }
   const view = window.views[viewName];
   if (!view) { navigate('#/orders'); return; }
 
@@ -261,11 +284,20 @@ function showApp() {
   $('#app').classList.remove('hidden');
   const u = state.user;
   $('#user-name').textContent = u.name;
-  const roleLabel = u.role === 'admin' ? 'Руководитель' : 'Менеджер';
-  $('#user-role').textContent = roleLabel === u.name ? '' : roleLabel;
+  const rl = roleLabel(u.role);
+  $('#user-role').textContent = rl === u.name ? '' : rl;
   $('#user-avatar').textContent = (u.name || '?').trim().charAt(0).toUpperCase();
   $('#nav-settings').classList.toggle('hidden', u.role !== 'admin');
-  if (!location.hash || location.hash === '#' || location.hash === '#/') location.hash = '#/orders';
+  // меню по роли: сотруднику цеха только «Мои задания», мастеру ещё и экран сотрудника
+  const worker = u.role === 'worker';
+  $$('#nav a').forEach((a) => {
+    const r = a.dataset.route;
+    if (r === 'work') a.classList.toggle('hidden', !(worker || u.role === 'master'));
+    else if (r !== 'settings') a.classList.toggle('hidden', worker);
+  });
+  document.body.classList.toggle('role-worker', worker);
+  const home = worker ? '#/work' : u.role === 'master' ? '#/production' : '#/orders';
+  if (!location.hash || location.hash === '#' || location.hash === '#/') location.hash = home;
   renderRoute();
 }
 
