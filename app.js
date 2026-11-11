@@ -48,8 +48,36 @@ function prodStageLabel(key) { const s = PROD_STAGES.find((x) => x.key === key);
 
 const ROLE_LABELS = { admin: 'Руководитель', manager: 'Менеджер', master: 'Мастер цеха', worker: 'Сотрудник цеха' };
 function roleLabel(r) { return ROLE_LABELS[r] || 'Менеджер'; }
-const isWorker = () => !!state.user && state.user.role === 'worker';
-const canManageFloor = () => !!state.user && (state.user.role === 'admin' || state.user.role === 'master');
+
+/* Права текущего пользователя: должности + отдельные права + участки (логика в perms.js) */
+function myEff() {
+  const u = state.user;
+  if (!u) return null;
+  if (Array.isArray(u.perms)) return { perms: u.perms, areas: u.areas && u.areas.length ? u.areas : null };
+  return Perms.effective(u, []);
+}
+function can(key, areaId) { return Perms.can(myEff(), key, areaId); }
+// Подпись под именем: должности (или старая роль)
+function userTitle(u) { return (u && (u.title || (Array.isArray(u.perms) ? '' : ROLE_LABELS[u.role]))) || ''; }
+// Только цех: нет офисных разделов, экран без бокового меню
+const OFFICE_PERMS = ['orders.view', 'floor.view', 'stock.view', 'purchases', 'analytics', 'users', 'pricing.setup', 'prod.setup', 'audit', 'integrations'];
+const isWorker = () => !!state.user && !OFFICE_PERMS.some((k) => can(k));
+const canManageFloor = (areaId) => can('floor.manage', areaId);
+
+// Какие разделы открыты по правам
+const ROUTE_PERMS = {
+  orders: 'orders.view', order: 'orders.view', clients: 'orders.view', client: 'orders.view', tasks: 'orders.view',
+  calc: ['orders.edit', 'pricing.setup'], production: ['floor.view', 'floor.manage'], work: ['floor.work', 'floor.manage'],
+  qc: 'floor.qc', stock: 'stock.view', purchases: 'purchases', purchase: 'purchases', analytics: 'analytics',
+  settings: ['users', 'pricing.setup', 'prod.setup', 'integrations', 'audit'],
+};
+const routeAllowed = (name) => { const p = ROUTE_PERMS[name]; return !p || can(p); };
+// Стартовый экран: мастеру цех, менеджеру заказы, сотруднику его задания, контролёру приёмка
+function homeRoute() {
+  if (can('floor.manage') && !can('orders.edit')) return '#/production';
+  for (const r of ['orders', 'work', 'qc', 'production', 'stock', 'purchases', 'calc', 'settings']) if (routeAllowed(r)) return '#/' + r;
+  return null;
+}
 
 function statusBadge(key) { return `<span class="badge st-${esc(key)}">${esc(statusLabel(key))}</span>`; }
 
@@ -193,7 +221,8 @@ function clientOptions(selectedId) {
   ).join('');
 }
 function managerOptions(selectedId) {
-  return (state.users || []).filter((u) => u.active && u.role !== 'worker').map((u) =>
+  return (state.users || []).filter((u) => (u.active && (Array.isArray(u.perms) ? u.perms.includes('orders.edit') : u.role !== 'worker'))
+    || String(u.id) === String(selectedId ?? '')).map((u) =>
     `<option value="${u.id}" ${String(u.id) === String(selectedId ?? '') ? 'selected' : ''}>${esc(u.name)}</option>`
   ).join('');
 }
@@ -234,7 +263,7 @@ const PAGE_TITLES = {
   orders: 'Заказы', order: 'Заказ', calc: 'Калькулятор', production: 'Производство', stock: 'Склад',
   purchases: 'Закупки', purchase: 'Закупка',
   clients: 'Клиенты', client: 'Клиент', tasks: 'Задачи', analytics: 'Аналитика', settings: 'Настройки',
-  work: 'Мои задания',
+  work: 'Мои задания', qc: 'Приёмка ОТК',
 };
 
 let routeSeq = 0;
@@ -248,11 +277,17 @@ async function renderRoute() {
   if (name === 'orders' && arg) viewName = 'order';
   if (name === 'clients' && arg) viewName = 'client';
   if (name === 'purchases' && arg) viewName = 'purchase';
-  if (name === 'settings' && state.user.role !== 'admin') { navigate('#/orders'); return; }
-  // сотрудник цеха видит только свои задания
-  if (isWorker() && name !== 'work') { navigate('#/work'); return; }
+  // разделы по правам должности
+  if (!routeAllowed(viewName) || !routeAllowed(name)) {
+    const home = homeRoute();
+    if (home && home !== '#/' + name) { navigate(home); return; }
+    $('#page-title').textContent = '';
+    $('#main').innerHTML = '<div class="panel empty-note">У вашей должности пока нет разделов в СРМ. '
+      + 'Права назначает руководитель: Настройки, вкладка «Пользователи».</div>';
+    return;
+  }
   const view = window.views[viewName];
-  if (!view) { navigate('#/orders'); return; }
+  if (!view) { const home = homeRoute(); if (home) navigate(home); return; }
 
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === name));
   $('#page-title').textContent = PAGE_TITLES[viewName] || '';
@@ -284,19 +319,15 @@ function showApp() {
   $('#app').classList.remove('hidden');
   const u = state.user;
   $('#user-name').textContent = u.name;
-  const rl = roleLabel(u.role);
+  const rl = userTitle(u);
   $('#user-role').textContent = rl === u.name ? '' : rl;
+  $('#user-role').title = rl;
   $('#user-avatar').textContent = (u.name || '?').trim().charAt(0).toUpperCase();
-  $('#nav-settings').classList.toggle('hidden', u.role !== 'admin');
-  // меню по роли: сотруднику цеха только «Мои задания», мастеру ещё и экран сотрудника
-  const worker = u.role === 'worker';
-  $$('#nav a').forEach((a) => {
-    const r = a.dataset.route;
-    if (r === 'work') a.classList.toggle('hidden', !(worker || u.role === 'master'));
-    else if (r !== 'settings') a.classList.toggle('hidden', worker);
-  });
-  document.body.classList.toggle('role-worker', worker);
-  const home = worker ? '#/work' : u.role === 'master' ? '#/production' : '#/orders';
+  // меню по правам: каждый видит только свои разделы
+  // «Мои задания» в меню только у тех, кто сам выполняет задания (мастер открывает экран по ссылке из цеха)
+  $$('#nav a').forEach((a) => a.classList.toggle('hidden', a.dataset.route === 'work' ? !can('floor.work') : !routeAllowed(a.dataset.route)));
+  document.body.classList.toggle('role-worker', isWorker());
+  const home = homeRoute() || '#/orders';
   if (!location.hash || location.hash === '#' || location.hash === '#/') location.hash = home;
   renderRoute();
 }

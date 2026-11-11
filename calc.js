@@ -186,7 +186,7 @@ views.calc = async function (box, arg, query) {
     </div>
     <div class="muted small" style="margin:-8px 0 14px">
       Курс у.е.: материалы <b>${fmtMoney(cfg.currency.materials)}</b> · работы <b>${fmtMoney(cfg.currency.works)}</b>
-      ${state.user && state.user.role === 'admin' ? ' — <a href="#/settings?tab=pricing">изменить в настройках</a>' : ''}
+      ${can('pricing.setup') ? ' — <a href="#/settings?tab=pricing">изменить в настройках</a>' : ''}
     </div>
     <div class="calc-grid">
       <div class="panel panel-pad">

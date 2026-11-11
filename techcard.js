@@ -33,9 +33,12 @@ function techcardHTML(tc, opts = {}) {
   if (tc.ok === false) return `<div class="form-error">${esc(tc.error || 'Техкарта не построена')}</div>`;
   const byId = new Map(tc.ops.map((o) => [o.id, o]));
   const T = tc.totals || {};
-  const isAdmin = state.user && state.user.role === 'admin';
+  const isAdmin = can('prod.setup');
+  // деньги по правам: цена по прайсу и плановая себестоимость (сервер их и не присылает тем, кому нельзя)
+  const P = T.priceTotal !== undefined && can('money.price');
+  const C = T.planCost !== undefined && can('money.cost');
 
-  const ST = { done: '✓ готово', work: '● в работе', paused: 'пауза', todo: '' };
+  const ST = { done: '✓ готово', work: '● в работе', paused: 'пауза', check: 'ждёт ОТК', todo: '' };
   const chip = (o) => `
     <div class="tc-op${o.warn ? ' tc-op-warn' : ''}${opts.status && opts.status[o.id] ? ' tc-st-' + opts.status[o.id] : ''}" style="--c:${tcAreaColor(tc, o.areaId)}" title="${esc(
       [o.name, o.machineName && 'машина: ' + o.machineName, o.qtyNote, o.note, o.warn && '⚠ ' + o.warn].filter(Boolean).join('\n'))}">
@@ -64,8 +67,8 @@ function techcardHTML(tc, opts = {}) {
           <b>${esc(a.name)}</b>${a.kind === 'outsource' ? ' <span class="muted small">подряд</span>' : ''}
           <span class="muted small">· ${a.ops} опер.</span></td>
         <td class="num"><b>${fmtMinutes(a.timeMin)}</b></td>
-        <td></td>
-        <td class="num">${a.planCost ? fmtMoney(a.planCost) : ''}</td>
+        ${P ? '<td></td>' : ''}
+        ${C ? `<td class="num">${a.planCost ? fmtMoney(a.planCost) : ''}</td>` : ''}
       </tr>
       ${ops.map((o) => `
         <tr>
@@ -74,8 +77,8 @@ function techcardHTML(tc, opts = {}) {
           <td>${esc(o.machineName || (o.areaKind === 'outsource' ? 'подрядчик' : 'вручную'))}</td>
           <td class="num">${fmtNum(o.qty)} ${esc(o.unit)}${o.qtyNote ? `<div class="tc-sub">${esc(o.qtyNote)}</div>` : ''}</td>
           <td class="num">${tcOpTime(o)}</td>
-          <td class="num">${o.priceRub != null ? fmtMoney(o.priceRub) : ''}${o.priceNote ? `<div class="tc-sub">${esc(o.priceNote)}</div>` : ''}</td>
-          <td class="num">${o.planCost != null ? fmtMoney(o.planCost) : '<span class="muted">—</span>'}</td>
+          ${P ? `<td class="num">${o.priceRub != null ? fmtMoney(o.priceRub) : ''}${o.priceNote ? `<div class="tc-sub">${esc(o.priceNote)}</div>` : ''}</td>` : ''}
+          ${C ? `<td class="num">${o.planCost != null ? fmtMoney(o.planCost) : '<span class="muted">—</span>'}</td>` : ''}
         </tr>`).join('')}`;
   }).join('');
 
@@ -102,8 +105,8 @@ function techcardHTML(tc, opts = {}) {
         <div class="tile"><div class="t-label">Работы по плану</div><div class="t-value">${fmtMinutes(T.timeMin)}</div></div>
         <div class="tile" title="Самая длинная цепочка операций, если участки заняты только этим заказом">
           <div class="t-label">Срок по маршруту</div><div class="t-value">≈ ${fmtMinutes(T.criticalMin)}</div></div>
-        <div class="tile"><div class="t-label">Себестоимость (план)</div>
-          <div class="t-value">${T.planCost > 0 ? fmtMoney(T.planCost) : '—'}</div></div>
+        ${C ? `<div class="tile"><div class="t-label">Себестоимость (план)</div>
+          <div class="t-value">${T.planCost > 0 ? fmtMoney(T.planCost) : '—'}</div></div>` : ''}
       </div>
       ${(tc.notes || []).length ? `<div class="warn-box"><ul>${tc.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
         ${isAdmin ? '<div style="margin-top:6px"><a href="#/settings?tab=production">Открыть справочник производства →</a></div>' : ''}</div>` : ''}
@@ -112,15 +115,15 @@ function techcardHTML(tc, opts = {}) {
       <h4 class="tc-h4">По участкам</h4>
       <div class="tbl-wrap"><table class="tbl tc-table">
         <thead><tr><th>Операция</th><th>Часть</th><th>Машина</th><th class="num">Объём</th>
-          <th class="num">Время</th><th class="num">Цена по прайсу</th><th class="num">Себест. план</th></tr></thead>
+          <th class="num">Время</th>${P ? '<th class="num">Цена по прайсу</th>' : ''}${C ? '<th class="num">Себест. план</th>' : ''}</tr></thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr>
-          <td colspan="5">Работы ${fmtMoney(T.priceOps)} + материалы ${fmtMoney(T.priceMaterials)} = ${fmtMoney(T.priceTotal)} · ${check}</td>
-          <td class="num">${fmtMoney(T.priceOps)}</td>
-          <td class="num">${T.planCost > 0 ? fmtMoney(T.planCost) + (T.planCostComplete ? '' : ' *') : '—'}</td>
-        </tr></tfoot>
+        ${P || C ? `<tfoot><tr>
+          <td colspan="5">${P ? `Работы ${fmtMoney(T.priceOps)} + материалы ${fmtMoney(T.priceMaterials)} = ${fmtMoney(T.priceTotal)} · ${check}` : ''}</td>
+          ${P ? `<td class="num">${fmtMoney(T.priceOps)}</td>` : ''}
+          ${C ? `<td class="num">${T.planCost > 0 ? fmtMoney(T.planCost) + (T.planCostComplete ? '' : ' *') : '—'}</td>` : ''}
+        </tr></tfoot>` : ''}
       </table></div>
-      ${T.planCost > 0 && !T.planCostComplete ? '<div class="muted small">* не по всем участкам заданы ставки</div>' : ''}
+      ${C && T.planCost > 0 && !T.planCostComplete ? '<div class="muted small">* не по всем участкам заданы ставки</div>' : ''}
       ${paper}
     </div>`;
 }
@@ -182,6 +185,7 @@ const TC_TYPES = ['books7', 'brochures'];
 /* Для заказов, рассчитанных до появления техкарты: строим её по сохранённым параметрам */
 async function techcardForOrder(order, calc, params) {
   if (calc && calc.techcard) return { tc: calc.techcard, fresh: false };
+  if (!can(['orders.edit', 'pricing.setup'])) return null; // без права на расчёт старую техкарту не построить
   if (!order || !TC_TYPES.includes(order.product_type) || !params || !Object.keys(params).length) return null;
   try {
     const r = await api('/api/calc/' + encodeURIComponent(order.product_type), { method: 'POST', body: params });

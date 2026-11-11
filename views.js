@@ -19,14 +19,14 @@ function newOrderDialog(preset = {}) {
           <select name="client_id" required><option value="">— выберите —</option>${clientOptions(preset.client_id)}</select>
         </label>
         <label class="fld"><span>Менеджер</span>
-          <select name="manager_id">${managerOptions(preset.manager_id ?? state.user.id)}</select>
+          <select name="manager_id" ${can('orders.assign') ? '' : 'disabled title="Передать заказ другому менеджеру может руководитель отдела продаж"'}>${managerOptions(preset.manager_id ?? state.user.id)}</select>
         </label>
         <label class="fld"><span>Статус</span>
           <select name="status">${STATUSES.map((s) => `<option value="${s.key}">${s.label}</option>`).join('')}</select>
         </label>
         <label class="fld"><span>Срок сдачи</span><input name="due_date" type="date"></label>
         <label class="fld"><span>Тираж, экз.</span><input name="quantity" type="number" min="0" value="0"></label>
-        <label class="fld"><span>Цена за тираж, ₽</span><input name="price" type="number" min="0" step="0.01" value="0"></label>
+        ${can('money.price') ? '<label class="fld"><span>Цена за тираж, ₽</span><input name="price" type="number" min="0" step="0.01" value="0"></label>' : ''}
         <label class="fld span2"><span>Заметки</span><textarea name="notes" rows="2"></textarea></label>
       </form>`,
     footer: `<button class="btn" data-act="cancel">Отмена</button>
@@ -41,7 +41,7 @@ function newOrderDialog(preset = {}) {
         method: 'POST',
         body: {
           title: f.get('title'), client_id: Number(f.get('client_id')) || null,
-          manager_id: Number(f.get('manager_id')) || null, status: f.get('status'),
+          manager_id: can('orders.assign') ? Number(f.get('manager_id')) || null : state.user.id, status: f.get('status'),
           due_date: f.get('due_date') || '', quantity: Number(f.get('quantity')) || 0,
           price: Number(f.get('price')) || 0, notes: f.get('notes') || '',
         },
@@ -77,24 +77,28 @@ views.orders = async function (box) {
           <option value="">Все статусы</option>
           ${STATUSES.map((s) => `<option value="${s.key}">${s.label}</option>`).join('')}
         </select>
-        <select id="ord-manager">
+        <select id="ord-manager" class="${can('orders.all') ? '' : 'hidden'}">
           <option value="">Все менеджеры</option>
           ${managerOptions()}
         </select>
+        ${can('orders.all') ? '' : '<span class="muted small" title="Право «Все клиенты и заказы» даёт руководитель">Показаны ваши заказы</span>'}
       </div>
       <div class="toolbar">
         <button class="btn" id="btn-orders-csv" title="Выгрузить заказы с текущими фильтрами">Выгрузить в Excel</button>
-        <button class="btn btn-primary" id="btn-new-order">+ Новый заказ</button>
+        <button class="btn btn-primary ${can('orders.edit') ? '' : 'hidden'}" id="btn-new-order">+ Новый заказ</button>
       </div>
     </div>
     <div id="orders-body"><div class="empty-note">Загрузка…</div></div>`;
   $('#btn-orders-csv', box).addEventListener('click', async () => {
     try {
       const list = await fetchOrders();
+      // суммы в выгрузке только у тех, кто их видит
+      const P = can('money.price'), C = can('money.cost');
       downloadCSV(`заказы-${todayISO()}.csv`,
-        ['Номер', 'Создан', 'Клиент', 'Название', 'Вид продукции', 'Статус', 'Тираж', 'Цена, ₽', 'Себестоимость, ₽', 'Срок', 'Менеджер', 'Заданий выполнено'],
+        ['Номер', 'Создан', 'Клиент', 'Название', 'Вид продукции', 'Статус', 'Тираж', ...(P ? ['Цена, ₽'] : []), ...(C ? ['Себестоимость, ₽'] : []),
+          'Срок', 'Менеджер', 'Заданий выполнено'],
         list.map((o) => [o.number, fmtDate(o.created_at), o.client_name || '', o.title || '', typeLabel(o.product_type), statusLabel(o.status),
-          o.quantity || 0, o.price || 0, o.cost || 0, fmtDate(o.due_date), o.manager_name || '',
+          o.quantity || 0, ...(P ? [o.price || 0] : []), ...(C ? [o.cost || 0] : []), fmtDate(o.due_date), o.manager_name || '',
           o.ops_total ? `${o.ops_done} из ${o.ops_total}` : '']));
     } catch (e) { toastErr(e); }
   });
@@ -112,12 +116,12 @@ views.orders = async function (box) {
 
   function kbCardHTML(o) {
     return `
-      <div class="kb-card" draggable="true" data-id="${o.id}">
+      <div class="kb-card" draggable="${can('orders.edit') ? 'true' : 'false'}" data-id="${o.id}">
         <div class="kb-num"><span>№ ${esc(o.number)}</span><span>${orderDueHTML(o.due_date)}</span></div>
         <div class="kb-title">${esc(o.title || typeLabel(o.product_type))}</div>
         <div class="kb-client">${esc(o.client_name || 'Без клиента')}</div>
         <div class="kb-foot">
-          <span class="kb-price">${o.price ? fmtMoney(o.price) : '—'}</span>
+          <span class="kb-price">${can('money.price') ? (o.price ? fmtMoney(o.price) : '—') : (o.quantity ? fmtNum(o.quantity) + ' экз.' : '')}</span>
           <span>${esc(o.manager_name || '')}</span>
         </div>
       </div>`;
@@ -167,7 +171,7 @@ views.orders = async function (box) {
         <table class="tbl">
           <thead><tr>
             <th>№</th><th>Название</th><th>Клиент</th><th>Статус</th><th>Менеджер</th>
-            <th class="num">Тираж</th><th class="num">Сумма</th><th>Срок</th><th>Создан</th>
+            <th class="num">Тираж</th>${can('money.price') ? '<th class="num">Сумма</th>' : ''}<th>Срок</th><th>Создан</th>
           </tr></thead>
           <tbody>
             ${orders.map((o) => `
@@ -178,7 +182,7 @@ views.orders = async function (box) {
                 <td>${statusBadge(o.status)}</td>
                 <td>${esc(o.manager_name || '—')}</td>
                 <td class="num">${o.quantity ? fmtNum(o.quantity) : '—'}</td>
-                <td class="num">${o.price ? fmtMoney(o.price) : '—'}</td>
+                ${can('money.price') ? `<td class="num">${o.price ? fmtMoney(o.price) : '—'}</td>` : ''}
                 <td>${orderDueHTML(o.due_date)}</td>
                 <td class="muted small">${fmtDate(o.created_at)}</td>
               </tr>`).join('')}
@@ -240,7 +244,10 @@ views.order = async function (box, id) {
   $('#page-title').textContent = `Заказ № ${order.number}`;
   const calc = safeParse(order.calc_json);
   const params = safeParse(order.params_json);
-  const isAdmin = state.user.role === 'admin';
+  // права: кто ведёт заказ, кто видит деньги, кто меняет утверждённую цену
+  const edit = can('orders.edit'), seePrice = can('money.price'), seeCost = can('money.cost');
+  const lockedForMe = !!order.price_locked && !can('price.approved');
+  const hide = (ok) => (ok ? '' : ' hidden');
   let b24 = null;
   try { const ig = await api('/api/integrations'); b24 = ig && ig.bitrix24; } catch { /* не критично */ }
   const b24on = !!(b24 && (b24.configured || b24.webhookUrl));
@@ -249,30 +256,31 @@ views.order = async function (box, id) {
     <div class="page-head">
       <h2>№ ${esc(order.number)} · ${esc(order.title || typeLabel(order.product_type))} &nbsp;${statusBadge(order.status)}</h2>
       <div class="toolbar">
-        <button class="btn" id="btn-kp" ${calc && calc.priceTotal != null || order.price ? '' : 'disabled title="Нет данных для КП"'}>
+        <button class="btn${hide(edit && seePrice)}" id="btn-kp" ${calc && calc.priceTotal != null || order.price ? '' : 'disabled title="Нет данных для КП"'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           Коммерческое предложение</button>
         <button class="btn" id="btn-tz" ${order.product_type ? '' : 'disabled title="Нет калькуляции"'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           Техзадание</button>
-        <button class="btn" id="btn-recalc">
+        <button class="btn${hide(edit)}" id="btn-recalc">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           ${order.product_type ? 'Пересчитать / изменить калькуляцию' : 'Создать калькуляцию'}</button>
-        ${calc && ((calc.materials && calc.materials.length) || calc.techcard) ? `<button class="btn" id="btn-writeoff" title="Списать материалы тиража со склада">
+        ${calc && ((calc.materials && calc.materials.length) || calc.techcard) ? `<button class="btn${hide(can('stock.edit'))}" id="btn-writeoff" title="Списать материалы тиража со склада">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
           Списать материалы</button>` : ''}
-        ${calc && (calc.techcard || (calc.materials && calc.materials.length)) ? `<button class="btn" id="btn-mat-request" title="Сравнить потребность заказа со складом и заказать недостающее">
+        ${calc && (calc.techcard || (calc.materials && calc.materials.length)) ? `<button class="btn${hide(can('purchases'))}" id="btn-mat-request" title="Сравнить потребность заказа со складом и заказать недостающее">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
           Заявка на материалы</button>` : ''}
-        ${order.product_type ? `<button class="btn" id="btn-reprint" title="Повтор заказа из-за брака или недовложения: клиенту бесплатно">
+        ${order.product_type ? `<button class="btn${hide(edit)}" id="btn-reprint" title="Повтор заказа из-за брака или недовложения: клиенту бесплатно">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
           Перепечатка</button>` : ''}
-        ${b24on ? `<button class="btn" id="btn-b24" title="Создать сделку в Битрикс24">
+        ${b24on && edit ? `<button class="btn" id="btn-b24" title="Создать сделку в Битрикс24">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           В Битрикс24</button>` : ''}
-        ${isAdmin ? '<button class="btn btn-danger" id="btn-del-order">Удалить</button>' : ''}
+        ${can('orders.delete') ? '<button class="btn btn-danger" id="btn-del-order">Удалить</button>' : ''}
       </div>
     </div>
+    ${!seePrice ? '<div class="info-box">Цены и суммы по этому заказу скрыты: у вашей должности нет права их видеть.</div>' : ''}
     ${order.reprint_of ? `<div class="warn-box">Это перепечатка к заказу <a href="#/orders/${order.reprint_of}"><b>№ ${esc(order.reprint_of_number || '')}</b></a>: клиенту бесплатно, цена 0 ₽, затраты видны в себестоимости.</div>` : ''}
     ${order.reprints && order.reprints.length ? `<div class="warn-box">Перепечатки по заказу: ${order.reprints.map((r) =>
       `<a href="#/orders/${r.id}"><b>№ ${esc(r.number)}</b></a> (${fmtNum(r.quantity)} экз., ${esc(statusLabel(r.status))})`).join(', ')}</div>` : ''}
@@ -281,29 +289,31 @@ views.order = async function (box, id) {
         <div class="panel panel-pad">
           <h3>Данные заказа</h3>
           <form id="order-form" class="form-grid">
+            <fieldset class="span2 order-fs" ${edit ? '' : 'disabled'}><div class="form-grid">
             <label class="fld span2"><span>Название</span><input name="title" type="text" value="${esc(order.title)}"></label>
             <label class="fld"><span>Клиент</span>
               <select name="client_id"><option value="">— не выбран —</option>${clientOptions(order.client_id)}</select></label>
             <label class="fld"><span>Менеджер</span>
-              <select name="manager_id"><option value="">—</option>${managerOptions(order.manager_id)}</select></label>
+              <select name="manager_id" ${can('orders.assign') ? '' : 'disabled title="Передать заказ другому менеджеру может руководитель отдела продаж"'}><option value="">—</option>${managerOptions(order.manager_id)}</select></label>
             <label class="fld"><span>Статус</span>
               <select name="status">${STATUSES.map((s) => `<option value="${s.key}" ${s.key === order.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>
             ${order.ops && order.ops.length ? '' : `<label class="fld"><span>Этап производства</span>
               <select name="prod_stage">${PROD_STAGES.map((s) => `<option value="${s.key}" ${s.key === (order.prod_stage || '') ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>`}
             <label class="fld"><span>Срок сдачи</span><input name="due_date" type="date" value="${esc(order.due_date)}"></label>
             <label class="fld"><span>Тираж, экз.</span><input name="quantity" type="number" min="0" value="${order.quantity || 0}"></label>
-            <label class="fld"><span>Цена за тираж, ₽${order.price_locked ? ' 🔒' : ''}</span><input name="price" type="number" min="0" step="0.01" value="${order.price || 0}"></label>
-            <label class="fld"><span>Себестоимость, ₽</span><input name="cost" type="number" min="0" step="0.01" value="${order.cost || 0}"></label>
+            ${seePrice ? `<label class="fld"><span>Цена за тираж, ₽${order.price_locked ? ' 🔒' : ''}</span><input name="price" type="number" min="0" step="0.01" value="${order.price || 0}" ${lockedForMe ? 'disabled title="Цена утверждена: менять её может руководитель с правом «Менять утверждённую цену»"' : ''}></label>` : ''}
+            ${seeCost ? `<label class="fld"><span>Себестоимость, ₽</span><input name="cost" type="number" min="0" step="0.01" value="${order.cost || 0}"></label>` : ''}
             <label class="fld"><span>Вид продукции</span><input type="text" value="${esc(typeLabel(order.product_type))}" disabled></label>
             <label class="fld span2"><span>Заметки</span><textarea name="notes" rows="3">${esc(order.notes)}</textarea></label>
-            <label class="check-fld span2" title="Цена согласована с клиентом: пересчёт калькуляции не изменит её (менять можно вручную)">
-              <input type="checkbox" name="price_locked" ${order.price_locked ? 'checked' : ''}>
-              <span>Цена согласована с клиентом: пересчёт её не меняет</span></label>
+            ${seePrice ? `<label class="check-fld span2" title="Цена согласована с клиентом: пересчёт калькуляции не изменит её">
+              <input type="checkbox" name="price_locked" ${order.price_locked ? 'checked' : ''} ${lockedForMe ? 'disabled' : ''}>
+              <span>Цена согласована с клиентом: пересчёт её не меняет${lockedForMe ? '. <span class="muted">Снять фиксацию может руководитель с правом «Менять утверждённую цену»</span>' : ''}</span></label>` : ''}
+            </div></fieldset>
           </form>
           <div class="toolbar" style="margin-top:14px;justify-content:space-between">
             <span class="muted small">Клиент: ${order.client_id ? `<a href="#/clients/${order.client_id}">${esc(order.client_name || '')}</a>` : '—'}
               · Создан ${fmtDateTime(order.created_at)} · Обновлён ${fmtDateTime(order.updated_at)}</span>
-            <button class="btn btn-primary" id="btn-save-order">Сохранить</button>
+            <button class="btn btn-primary${hide(edit)}" id="btn-save-order">Сохранить</button>
           </div>
         </div>
 
@@ -363,7 +373,10 @@ views.order = async function (box, id) {
 
   // калькуляция
   const calcBox = $('#calc-content', box);
-  if (calc && (calc.priceTotal != null || calc.ok)) {
+  if (!seePrice) {
+    calcBox.innerHTML = `<div class="muted" style="margin-bottom:10px">Суммы расчёта скрыты. Маршрут и объёмы смотрите в техкарте ниже.</div>
+      ${order.product_type && Object.keys(params).length ? paramsListHTML(order.product_type, params) : ''}`;
+  } else if (calc && (calc.priceTotal != null || calc.ok)) {
     calcBox.innerHTML = calcResultHTML(calc) + `
       <h3 style="margin-top:16px">Параметры</h3>
       ${paramsListHTML(order.product_type, params)}`;
@@ -428,18 +441,17 @@ views.order = async function (box, id) {
   // сохранение
   $('#btn-save-order', box).addEventListener('click', async () => {
     const f = new FormData($('#order-form', box));
+    // поля без права не отправляем: сервер их всё равно не примет
+    const body = {
+      title: f.get('title'), client_id: Number(f.get('client_id')) || null, status: f.get('status'),
+      due_date: f.get('due_date') || '', quantity: Number(f.get('quantity')) || 0,
+      notes: f.get('notes') || '', prod_stage: f.get('prod_stage') ?? undefined,
+    };
+    if (can('orders.assign')) body.manager_id = Number(f.get('manager_id')) || null;
+    if (seePrice && !lockedForMe) { body.price = Number(f.get('price')) || 0; body.price_locked = !!f.get('price_locked'); }
+    if (seeCost) body.cost = Number(f.get('cost')) || 0;
     try {
-      const saved = await api('/api/orders/' + id, {
-        method: 'PUT',
-        body: {
-          title: f.get('title'), client_id: Number(f.get('client_id')) || null,
-          manager_id: Number(f.get('manager_id')) || null, status: f.get('status'),
-          due_date: f.get('due_date') || '', quantity: Number(f.get('quantity')) || 0,
-          price: Number(f.get('price')) || 0, cost: Number(f.get('cost')) || 0,
-          notes: f.get('notes') || '', prod_stage: f.get('prod_stage') ?? undefined,
-          price_locked: !!f.get('price_locked'),
-        },
-      });
+      const saved = await api('/api/orders/' + id, { method: 'PUT', body });
       toast('Заказ сохранён', 'ok');
       opsToast(saved);
       renderRoute();
@@ -802,7 +814,8 @@ async function stockBatchesDialog(mat) {
 }
 
 views.stock = async function (box) {
-  const isAdmin = state.user.role === 'admin';
+  const isAdmin = can('stock.edit');
+  const seeValue = can(['purchases', 'money.cost']); // стоимость склада по закупочным ценам
   const filters = { q: '', low: false };
 
   box.innerHTML = `
@@ -829,17 +842,17 @@ views.stock = async function (box) {
     if (filters.low) rows = rows.filter(stockLow);
     body.innerHTML = `
       <div class="stat-tiles">
-        <div class="tile t-main"><div class="t-label">Стоимость склада</div><div class="t-value">${fmtMoney(totalValue)}</div></div>
+        ${seeValue ? `<div class="tile t-main"><div class="t-label">Стоимость склада</div><div class="t-value">${fmtMoney(totalValue)}</div></div>` : ''}
         <div class="tile"><div class="t-label">Позиций</div><div class="t-value">${fmtNum(totalCount)}</div></div>
         <div class="tile"><div class="t-label">Активных партий</div><div class="t-value">${fmtNum(totalBatches)}</div></div>
         <div class="tile"><div class="t-label">Заканчивается</div><div class="t-value" ${lowCount ? 'style="color:#C4156A"' : ''}>${fmtNum(lowCount)}</div></div>
       </div>
       ${lowCount ? `<div class="warn-box" style="margin-bottom:12px"><b>Заканчивается:</b> позиций с остатком ниже минимума — ${lowCount}.
-        <a href="#/purchases">Создать закупку по дефициту →</a></div>` : ''}
+        ${can('purchases') ? '<a href="#/purchases">Создать закупку по дефициту →</a>' : ''}</div>` : ''}
       <div class="panel tbl-wrap">
         <table class="tbl">
           <thead><tr>
-            <th>Материал</th><th>Ед. учёта</th><th class="num">Остаток</th><th class="num">Стоимость остатка</th>
+            <th>Материал</th><th>Ед. учёта</th><th class="num">Остаток</th>${seeValue ? '<th class="num">Стоимость остатка</th>' : ''}
             <th>Движение</th><th></th>
           </tr></thead>
           <tbody>
@@ -850,12 +863,12 @@ views.stock = async function (box) {
                 <td class="num" style="font-weight:700;${r.qty < 0 || stockLow(r) ? 'color:#C4156A' : ''}">
                   ${fmtNum(r.qty)}${stockLow(r) ? ' <span class="badge st-cancelled">мало</span>' : ''}
                   ${r.min_qty ? `<div class="muted small" style="font-weight:400">мин. ${fmtNum(r.min_qty)}</div>` : ''}</td>
-                <td class="num">${r.stock_value ? fmtMoney(r.stock_value) : '—'}</td>
+                ${seeValue ? `<td class="num">${r.stock_value ? fmtMoney(r.stock_value) : '—'}</td>` : ''}
                 <td class="muted small" style="white-space:nowrap" title="${r.last_move ? esc(fmtDateTime(r.last_move)) : ''}">${r.last_move ? fmtDate(r.last_move) : '—'}</td>
                 <td style="white-space:nowrap">
                   <div class="toolbar" style="justify-content:flex-end;flex-wrap:nowrap;gap:4px">
-                    <button class="btn btn-sm st-in">+ Приход</button>
-                    <button class="btn btn-sm st-out">− Списать</button>
+                    <button class="btn btn-sm st-in${isAdmin ? '' : ' hidden'}">+ Приход</button>
+                    <button class="btn btn-sm st-out${isAdmin ? '' : ' hidden'}">− Списать</button>
                     <button class="btn btn-sm st-batches" title="Остаток по партиям">Партии${r.batches_active ? ` (${r.batches_active})` : ''}</button>
                     <button class="btn btn-sm btn-ghost st-hist" title="История движений" style="padding:5px 6px">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -867,8 +880,8 @@ views.stock = async function (box) {
           </tbody>
         </table>
       </div>
-      <div class="muted small" style="margin-top:10px">Стоимость остатков считается по ценам партий (закупочным).
-        Позиции без цены прихода в стоимости не участвуют.</div>`;
+      ${seeValue ? `<div class="muted small" style="margin-top:10px">Стоимость остатков считается по ценам партий (закупочным).
+        Позиции без цены прихода в стоимости не участвуют.</div>` : ''}`;
 
     $$('tbody tr[data-id]', body).forEach((tr) => {
       const mat = rows.find((r) => String(r.id) === tr.dataset.id);
@@ -1095,7 +1108,7 @@ views.purchases = async function (box, arg, query) {
     const seq = ++renderSeq;
     const rows = await loadSuppliers(true);
     if (seq !== renderSeq) return;
-    const isAdmin = state.user.role === 'admin';
+    const isAdmin = can('purchases');
     body.innerHTML = `
       <div class="page-head">
         <span class="muted small">Справочник поставщиков материалов. Из карточки закупки печатается бланк заказа с контактами поставщика.</span>
@@ -1281,7 +1294,7 @@ function printPurchaseForm(p) {
 views.purchase = async function (box, id) {
   const [p, stock] = await Promise.all([api('/api/purchases/' + id), api('/api/stock'), loadSuppliers()]);
   $('#page-title').textContent = `Закупка ${p.number}`;
-  const isAdmin = state.user.role === 'admin';
+  const isAdmin = can('purchases');
   const hasReceived = p.items.some((i) => i.received_qty > 0);
   const editable = ['draft', 'ordered'].includes(p.status) && !hasReceived;
   const headerEditable = !['received', 'cancelled'].includes(p.status);
@@ -1572,7 +1585,7 @@ views.clients = async function (box) {
       <div class="toolbar">
         <input type="text" id="cl-q" placeholder="Поиск: имя, телефон, e-mail, компания…" style="width:290px">
       </div>
-      <button class="btn btn-primary" id="btn-new-client">+ Новый клиент</button>
+      <button class="btn btn-primary${can('orders.edit') ? '' : ' hidden'}" id="btn-new-client">+ Новый клиент</button>
     </div>
     <div id="clients-body"></div>`;
 
@@ -1586,7 +1599,7 @@ views.clients = async function (box) {
         <table class="tbl">
           <thead><tr>
             <th>Имя</th><th>Компания</th><th>Контакт</th><th>Телефон</th><th>E-mail</th>
-            <th class="num">Заказов</th><th class="num">Сумма заказов</th>
+            <th class="num">Заказов</th>${can('money.price') ? '<th class="num">Сумма заказов</th>' : ''}
           </tr></thead>
           <tbody>
             ${rows.map((c) => `
@@ -1597,7 +1610,7 @@ views.clients = async function (box) {
                 <td class="mono">${esc(c.phone || '—')}</td>
                 <td>${esc(c.email || '—')}</td>
                 <td class="num">${c.orders_count}</td>
-                <td class="num">${c.orders_total ? fmtMoney(c.orders_total) : '—'}</td>
+                ${can('money.price') ? `<td class="num">${c.orders_total ? fmtMoney(c.orders_total) : '—'}</td>` : ''}
               </tr>`).join('')}
           </tbody>
         </table>
@@ -1621,23 +1634,23 @@ views.client = async function (box, id) {
     <div class="page-head">
       <h2>${esc(client.name)}</h2>
       <div class="toolbar">
-        <button class="btn" id="btn-edit-client">Редактировать</button>
-        <button class="btn btn-primary" id="btn-client-order">+ Новый заказ</button>
-        ${client.orders_count === 0 ? '<button class="btn btn-danger" id="btn-del-client">Удалить</button>' : ''}
+        <button class="btn${can('orders.edit') ? '' : ' hidden'}" id="btn-edit-client">Редактировать</button>
+        <button class="btn btn-primary${can('orders.edit') ? '' : ' hidden'}" id="btn-client-order">+ Новый заказ</button>
+        ${client.orders_count === 0 && can('orders.edit') ? '<button class="btn btn-danger" id="btn-del-client">Удалить</button>' : ''}
       </div>
     </div>
     <div class="order-grid">
       <div>
         <div class="panel tbl-wrap">
           <table class="tbl">
-            <thead><tr><th>№</th><th>Название</th><th>Статус</th><th class="num">Сумма</th><th>Срок</th></tr></thead>
+            <thead><tr><th>№</th><th>Название</th><th>Статус</th>${can('money.price') ? '<th class="num">Сумма</th>' : ''}<th>Срок</th></tr></thead>
             <tbody>
               ${orders.length ? orders.map((o) => `
                 <tr class="clickable" data-id="${o.id}">
                   <td class="mono">${esc(o.number)}</td>
                   <td><b>${esc(o.title || typeLabel(o.product_type))}</b></td>
                   <td>${statusBadge(o.status)}</td>
-                  <td class="num">${o.price ? fmtMoney(o.price) : '—'}</td>
+                  ${can('money.price') ? `<td class="num">${o.price ? fmtMoney(o.price) : '—'}</td>` : ''}
                   <td>${orderDueHTML(o.due_date)}</td>
                 </tr>`).join('') : '<tr><td colspan="5" class="empty-note">Заказов ещё нет</td></tr>'}
             </tbody>
@@ -1652,7 +1665,7 @@ views.client = async function (box, id) {
             <dt>Контакт</dt><dd>${esc(client.contact_person || '—')}</dd>
             <dt>Телефон</dt><dd class="mono">${esc(client.phone || '—')}</dd>
             <dt>E-mail</dt><dd>${client.email ? `<a href="mailto:${esc(client.email)}">${esc(client.email)}</a>` : '—'}</dd>
-            <dt>Заказов</dt><dd>${client.orders_count} на ${fmtMoney(client.orders_total)}</dd>
+            <dt>Заказов</dt><dd>${client.orders_count}${client.orders_total != null ? ' на ' + fmtMoney(client.orders_total) : ''}</dd>
             <dt>Добавлен</dt><dd>${fmtDate(client.created_at)}</dd>
           </dl>
           ${client.notes ? `<h3 style="margin-top:16px">Заметки</h3><div style="white-space:pre-wrap">${esc(client.notes)}</div>` : ''}
@@ -1899,19 +1912,16 @@ views.analytics = async function (box) {
 /* ================= НАСТРОЙКИ (админ) ================= */
 
 views.settings = async function (box, arg, query) {
+  // вкладки по правам: каждый видит только то, что ему можно настраивать
+  const TABS = [['users', 'Пользователи', 'users'], ['positions', 'Должности и права', 'users'], ['audit', 'Журнал действий', 'audit'],
+    ['pricing', 'Настройки калькуляции', 'pricing.setup'], ['ops', 'Доп. операции', 'pricing.setup'], ['calcs', 'Конструктор', 'pricing.setup'],
+    ['production', 'Производство', 'prod.setup'], ['integrations', 'Интеграции', 'integrations']].filter((t) => can(t[2]));
   box.innerHTML = `
-    <div class="tabs settings-tabs">
-      <button data-tab="users">Пользователи</button>
-      <button data-tab="pricing">Настройки калькуляции</button>
-      <button data-tab="ops">Доп. операции</button>
-      <button data-tab="calcs">Конструктор</button>
-      <button data-tab="production">Производство</button>
-      <button data-tab="integrations">Интеграции</button>
-    </div>
+    <div class="tabs settings-tabs">${TABS.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}</div>
     <div id="settings-body"></div>`;
   const body = $('#settings-body', box);
   const wanted = query && query.get('tab');
-  let tab = ['users', 'pricing', 'ops', 'calcs', 'production', 'integrations'].includes(wanted) ? wanted : 'users';
+  let tab = TABS.some((t) => t[0] === wanted) ? wanted : (TABS[0] || [''])[0];
   $$('.settings-tabs button', box).forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
 
   $$('.settings-tabs button', box).forEach((b) => b.addEventListener('click', () => {
@@ -1920,26 +1930,54 @@ views.settings = async function (box, arg, query) {
     render();
   }));
 
+  // Справочник должностей с правками руководителя (встроенные шаблоны + свои)
+  async function loadPositions() {
+    try { return (await api('/api/positions')).positions; } catch { return Perms.catalog([]); }
+  }
+  const permLabel = (k) => (Perms.PERMS.find((x) => x.key === k) || {}).label || k;
+  const permChips = (perms) => perms.map((k) => `<span class="perm-chip">${esc(permLabel(k))}</span>`).join('');
+
   async function userDialog(user) {
     const u = user || {};
     let floorAreas = [];
     try { floorAreas = (await api('/api/floor/areas')).areas.filter((a) => a.kind !== 'outsource'); } catch { /* нет справочника */ }
+    const cat = await loadPositions();
+    const myPos = new Set(u.positions || []);
+    const myExtra = new Set(u.extra || []);
     const myAreas = new Set(u.areas || []);
     const m = openModal({
       title: user ? 'Пользователь: ' + user.name : 'Новый пользователь',
+      wide: true,
       body: `
-        <form id="user-form" style="display:flex;flex-direction:column;gap:13px">
-          ${user ? '' : '<label class="fld"><span>Логин *</span><input name="login" type="text" required autocomplete="off"></label>'}
-          <label class="fld"><span>Имя *</span><input name="name" type="text" value="${esc(u.name || '')}" required></label>
-          <label class="fld"><span>Роль</span>
-            <select name="role">
-              ${['manager', 'admin', 'master', 'worker'].map((r) =>
-                `<option value="${r}" ${(u.role || 'manager') === r ? 'selected' : ''}>${roleLabel(r)}</option>`).join('')}
-            </select></label>
-          <div class="muted small" data-role-hint></div>
-          <div class="fld" data-areas-box><span>Участки сотрудника (видит и отмечает задания только этих участков)</span>
-            <div class="op-calcs">${floorAreas.map((a) => `<label class="check-fld"><input type="checkbox" name="area" value="${esc(a.id)}"
-              ${myAreas.has(a.id) ? 'checked' : ''}><span>${esc(a.name)}</span></label>`).join('') || '<span class="muted">Справочник участков пуст</span>'}</div></div>
+        <form id="user-form" class="ud">
+          <div class="form-grid">
+            ${user ? '' : '<label class="fld"><span>Логин *</span><input name="login" type="text" required autocomplete="off"></label>'}
+            <label class="fld"><span>Имя *</span><input name="name" type="text" value="${esc(u.name || '')}" required></label>
+          </div>
+          ${u.legacy ? `<div class="info-box">Пользователь заведён до должностей: сейчас права по старой роли «${esc(roleLabel(u.role))}».
+            Отметьте должности и сохраните.</div>` : ''}
+          <div class="ud-sec">
+            <div class="ud-h">Должности <span class="muted small">можно несколько: права складываются</span></div>
+            ${Perms.POS_GROUPS.map((g) => `<div class="ud-grp"><div class="ud-gname">${esc(g.name)}</div><div class="ud-pos">
+              ${cat.filter((pp) => pp.group === g.id).map((pp) => pp.module
+                ? `<span class="ud-chip off" title="${esc(pp.module)}">${esc(pp.name)}<small>раздела пока нет</small></span>`
+                : `<label class="ud-chip"><input type="checkbox" name="pos" value="${esc(pp.id)}" ${myPos.has(pp.id) ? 'checked' : ''}><span>${esc(pp.name)}</span></label>`).join('')}
+            </div></div>`).join('')}
+          </div>
+          <div class="ud-sec">
+            <div class="ud-h">Участки <span class="muted small">где действуют права цеха; не отмечено ни одного: все участки</span></div>
+            <div class="ud-pos">${floorAreas.map((a) => `<label class="ud-chip"><input type="checkbox" name="area" value="${esc(a.id)}"
+              ${myAreas.has(a.id) ? 'checked' : ''}><span>${esc(a.name)}</span></label>`).join('') || '<span class="muted">Справочник участков пуст</span>'}</div>
+          </div>
+          <details class="ud-sec" ${myExtra.size ? 'open' : ''}>
+            <summary class="ud-h">Отдельные права сверху должности <span class="muted small">например, доступ к деньгам или складу</span></summary>
+            ${Perms.GROUPS.map((g) => `<div class="ud-grp"><div class="ud-gname">${esc(g.name)}</div><div class="ud-perms">
+              ${Perms.PERMS.filter((pp) => pp.group === g.id).map((pp) => `<label class="check-fld ud-perm" data-perm="${pp.key}">
+                <input type="checkbox" name="extra" value="${pp.key}" ${myExtra.has(pp.key) ? 'checked' : ''}>
+                <span>${esc(pp.label)}${pp.hint ? ` <span class="muted small">${esc(pp.hint)}</span>` : ''}<em class="ud-by"></em></span></label>`).join('')}
+            </div></div>`).join('')}
+          </details>
+          <div class="ud-sum" id="ud-sum"></div>
           ${user ? `
             <label class="check-fld"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}><span>Активен (может входить в систему)</span></label>
             <label class="fld"><span>Новый пароль (оставьте пустым — без изменений)</span><input name="password" type="password" autocomplete="new-password"></label>`
@@ -1949,34 +1987,52 @@ views.settings = async function (box, arg, query) {
                <button class="btn btn-primary" data-act="save">${user ? 'Сохранить' : 'Добавить'}</button>`,
     });
     const form = $('#user-form', m.body);
-    const HINT = {
-      admin: 'Всё, включая настройки, цены и справочники.',
-      manager: 'Заказы, клиенты, калькулятор, КП. Производство только просмотр.',
-      master: 'Как менеджер, плюс управляет цехом: очереди, машины, отметки за сотрудников.',
-      worker: 'Только экран «Мои задания» на своих участках: без цен, клиентов и заказов.',
-    };
-    const syncRole = () => {
-      const r = form.elements.role.value;
-      $('[data-areas-box]', form).classList.toggle('hidden', r !== 'worker');
-      $('[data-role-hint]', form).textContent = HINT[r] || '';
-    };
-    form.elements.role.addEventListener('change', syncRole);
-    syncRole();
+    const picked = (name) => $$(`input[name="${name}"]:checked`, form).map((c) => c.value);
+    // итог: что сможет человек; права от должностей помечаются, отдельные галочки для них не нужны
+    function sync() {
+      const eff = Perms.effective({ positions: picked('pos'), extra_perms: [], areas: picked('area') }, cat);
+      $$('.ud-perm', form).forEach((l) => {
+        const byPos = eff.perms.includes(l.dataset.perm);
+        const inp = $('input', l);
+        inp.disabled = byPos;
+        if (byPos) inp.checked = true;
+        $('.ud-by', l).textContent = byPos ? ' есть по должности' : '';
+      });
+      const all = Perms.effective({ positions: picked('pos'), extra_perms: picked('extra'), areas: picked('area') }, cat);
+      const areaNames = picked('area').map((id) => (floorAreas.find((a) => a.id === id) || {}).name || id);
+      const usesAreas = all.perms.some((k) => Perms.AREA_KEYS.has(k));
+      $('#ud-sum', form).innerHTML = all.perms.length
+        ? `<div class="ud-h">Итого сможет</div><div>${permChips(all.perms)}</div>
+           ${usesAreas ? `<div class="muted small" style="margin-top:6px">Цех: ${areaNames.length ? esc(areaNames.join(', ')) : 'все участки'}</div>` : ''}`
+        : '<div class="muted">Пока никаких прав: отметьте должность</div>';
+    }
+    form.addEventListener('change', (e) => {
+      // при выборе должности сами отмечаются её участки
+      if (e.target.name === 'pos' && e.target.checked) {
+        const pp = cat.find((x) => x.id === e.target.value);
+        for (const a of (pp && pp.areas) || []) { const c = $(`input[name="area"][value="${a}"]`, form); if (c) c.checked = true; }
+      }
+      sync();
+    });
+    sync();
     async function submit() {
       if (!form.reportValidity()) return;
       const f = new FormData(form);
-      const areas = $$('input[name="area"]:checked', form).map((c) => c.value);
-      if (f.get('role') === 'worker' && !areas.length) { toast('Отметьте участки сотрудника', 'error'); return; }
+      const eff = Perms.effective({ positions: picked('pos'), extra_perms: [], areas: [] }, cat);
+      const positions = picked('pos');
+      const extra = picked('extra').filter((k) => !eff.perms.includes(k));
+      const areas = picked('area');
+      if (!positions.length && !extra.length) { toast('Отметьте должность или права', 'error'); return; }
       try {
         if (user) {
           await api('/api/users/' + user.id, {
             method: 'PUT',
-            body: { name: f.get('name'), role: f.get('role'), active: !!f.get('active'), password: f.get('password') || undefined, areas },
+            body: { name: f.get('name'), positions, extra, areas, active: !!f.get('active'), password: f.get('password') || undefined },
           });
         } else {
           await api('/api/users', {
             method: 'POST',
-            body: { login: f.get('login'), name: f.get('name'), role: f.get('role'), password: f.get('password'), areas },
+            body: { login: f.get('login'), name: f.get('name'), positions, extra, areas, password: f.get('password') },
           });
         }
         m.close();
@@ -1992,6 +2048,9 @@ views.settings = async function (box, arg, query) {
 
   async function renderUsers() {
     const users = await loadUsers(true);
+    let areas = [];
+    try { areas = (await api('/api/floor/areas')).areas; } catch { /* нет справочника */ }
+    const areaName = (id) => (areas.find((a) => a.id === id) || {}).name || id;
     body.innerHTML = `
       <div class="page-head">
         <h2>Пользователи системы</h2>
@@ -1999,24 +2058,145 @@ views.settings = async function (box, arg, query) {
       </div>
       <div class="panel tbl-wrap">
         <table class="tbl">
-          <thead><tr><th>Имя</th><th>Логин</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
+          <thead><tr><th>Имя</th><th>Логин</th><th>Должности</th><th>Участки</th><th>Статус</th><th></th></tr></thead>
           <tbody>
             ${users.map((u) => `
               <tr data-id="${u.id}" ${u.active ? '' : 'style="opacity:.55"'}>
                 <td><b>${esc(u.name)}</b></td>
                 <td class="mono">${esc(u.login)}</td>
-                <td>${roleLabel(u.role)}${u.role === 'worker' && u.areas && u.areas.length ? ` <span class="muted small">· участков: ${u.areas.length}</span>` : ''}</td>
+                <td>${u.legacy ? `<span class="muted">по старой роли:</span> ${esc(roleLabel(u.role))}` : esc(u.title || '—')}
+                  ${u.extra && u.extra.length ? `<div class="muted small">отдельно: ${esc(u.extra.map(permLabel).join(', '))}</div>` : ''}</td>
+                <td class="small">${u.areas && u.areas.length ? esc(u.areas.map(areaName).join(', ')) : '<span class="muted">все</span>'}</td>
                 <td>${u.active ? '<span class="badge st-ready">Активен</span>' : '<span class="badge st-cancelled">Отключён</span>'}</td>
                 <td style="width:120px"><button class="btn btn-sm u-edit">Изменить</button></td>
               </tr>`).join('')}
           </tbody>
         </table>
-      </div>`;
+      </div>
+      <div class="muted small" style="margin-top:10px">Права даются должностями (Настройки → «Должности и права»), одному человеку можно
+        несколько. Участки ограничивают права цеха: сотрудник видит и отмечает задания только своих участков.</div>`;
     $('#btn-new-user', body).addEventListener('click', () => userDialog());
     $$('tbody tr', body).forEach((tr) => {
       $('.u-edit', tr).addEventListener('click', () =>
         userDialog(users.find((u) => String(u.id) === tr.dataset.id)));
     });
+  }
+
+  /* --- должности: шаблоны прав по документу типографии, свои должности --- */
+  async function renderPositions() {
+    const [cat, users] = await Promise.all([loadPositions(), loadUsers(true)]);
+    let areas = [];
+    try { areas = (await api('/api/floor/areas')).areas.filter((a) => a.kind !== 'outsource'); } catch { /* нет справочника */ }
+    const areaName = (id) => (areas.find((a) => a.id === id) || {}).name || id;
+    const who = (id) => users.filter((u) => (u.positions || []).includes(id) && u.active).map((u) => u.name);
+    const ready = cat.filter((x) => !x.module).length;
+    body.innerHTML = `
+      <div class="page-head">
+        <h2>Должности и права</h2>
+        <button class="btn btn-primary" id="pos-new">+ Своя должность</button>
+      </div>
+      <p class="muted small prod-intro">Шаблоны по документу «Роли и права ERP типографии Радуга». Права в шаблоне можно поменять:
+        изменения сразу действуют у всех, у кого эта должность. Одному человеку можно дать несколько должностей, права складываются.
+        Готово к работе: <b>${ready} из ${cat.length}</b>. Остальные появятся вместе со своими разделами.</p>
+      ${Perms.POS_GROUPS.map((g) => {
+        const list = cat.filter((x) => x.group === g.id);
+        if (!list.length) return '';
+        return `<h3 class="pos-gh">${esc(g.name)}</h3><div class="pos-grid">${list.map((x) => {
+          const names = who(x.id);
+          return `<div class="pos-card${x.module ? ' pos-off' : ''}" data-id="${esc(x.id)}">
+            <div class="pos-name">${esc(x.name)}${x.custom ? ' <span class="badge st-approval">своя</span>' : ''}${x.edited ? ' <span class="badge st-calc">изменена</span>' : ''}</div>
+            ${x.module ? `<div class="pos-mod">Появится с разделом: ${esc(x.module)}</div>`
+              : `<div class="pos-perms">${x.perms.length === Perms.KEYS.length ? '<span class="perm-chip perm-all">Все права системы</span>'
+                : permChips(x.perms) || '<span class="muted small">прав нет</span>'}</div>
+                 ${x.areas && x.areas.length ? `<div class="muted small">Участки: ${esc(x.areas.map(areaName).join(', '))}</div>` : ''}
+                 ${x.note ? `<div class="muted small">${esc(x.note)}</div>` : ''}
+                 <div class="pos-foot"><span class="small ${names.length ? '' : 'muted'}">${names.length ? esc(names.join(', ')) : 'пока никого'}</span>
+                   <button class="btn btn-sm pos-edit">Изменить</button></div>`}
+          </div>`;
+        }).join('')}</div>`;
+      }).join('')}`;
+
+    async function save(next) {
+      const r = await api('/api/positions', { method: 'PUT', body: { positions: next.filter((x) => !x.module) } });
+      toast('Должности сохранены: права уже действуют', 'ok');
+      return r;
+    }
+    function editDialog(pos) {
+      const x = pos || { id: '', name: '', group: 'shop', perms: [], areas: [], custom: true };
+      const m = openModal({
+        title: pos ? 'Должность: ' + pos.name : 'Новая должность',
+        wide: true,
+        body: `<form id="pos-form" class="ud">
+          ${x.custom ? `<div class="form-grid">
+            <label class="fld"><span>Название *</span><input name="name" type="text" value="${esc(x.name)}" required></label>
+            <label class="fld"><span>Раздел</span><select name="group">${Perms.POS_GROUPS.map((g) =>
+              `<option value="${g.id}" ${g.id === x.group ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}</select></label></div>` : ''}
+          ${Perms.GROUPS.map((g) => `<div class="ud-grp"><div class="ud-gname">${esc(g.name)}</div><div class="ud-perms">
+            ${Perms.PERMS.filter((pp) => pp.group === g.id).map((pp) => `<label class="check-fld">
+              <input type="checkbox" name="perm" value="${pp.key}" ${x.perms.includes(pp.key) ? 'checked' : ''}
+                ${x.id === 'ceo' && pp.key === 'users' ? 'disabled title="У генерального директора это право остаётся всегда"' : ''}>
+              <span>${esc(pp.label)}${pp.hint ? ` <span class="muted small">${esc(pp.hint)}</span>` : ''}${pp.area ? ' <span class="badge-approx">по участкам</span>' : ''}</span></label>`).join('')}
+          </div></div>`).join('')}
+          <div class="ud-sec"><div class="ud-h">Участки по умолчанию <span class="muted small">отмечаются сами, когда человеку дают эту должность</span></div>
+            <div class="ud-pos">${areas.map((a) => `<label class="ud-chip"><input type="checkbox" name="area" value="${esc(a.id)}"
+              ${(x.areas || []).includes(a.id) ? 'checked' : ''}><span>${esc(a.name)}</span></label>`).join('')}</div></div>
+        </form>`,
+        footer: `${pos && pos.custom ? '<button class="btn btn-danger" data-act="del" style="margin-right:auto">Удалить должность</button>' : ''}
+          <button class="btn" data-act="cancel">Отмена</button><button class="btn btn-primary" data-act="save">Сохранить</button>`,
+      });
+      const form = $('#pos-form', m.body);
+      $('[data-act="cancel"]', m.foot).onclick = m.close;
+      const del = $('[data-act="del"]', m.foot);
+      if (del) del.onclick = async () => {
+        const names = who(x.id);
+        if (!await confirmDlg(`Удалить должность «${x.name}»?${names.length ? ' Она есть у: ' + names.join(', ') + '. Эти права у них пропадут.' : ''}`)) return;
+        try { await save(cat.filter((y) => y.id !== x.id)); m.close(); renderPositions(); } catch (e) { toastErr(e); }
+      };
+      $('[data-act="save"]', m.foot).onclick = async () => {
+        if (!form.reportValidity()) return;
+        const perms = $$('input[name="perm"]:checked', form).map((c) => c.value);
+        if (x.id === 'ceo' && !perms.includes('users')) perms.push('users');
+        const upd = { ...x, perms, areas: $$('input[name="area"]:checked', form).map((c) => c.value) };
+        if (x.custom) { upd.name = form.elements.name.value.trim(); upd.group = form.elements.group.value; }
+        const next = pos ? cat.map((y) => (y.id === x.id ? upd : y)) : [...cat, upd];
+        try { await save(next); m.close(); renderPositions(); } catch (e) { toastErr(e); }
+      };
+    }
+    $('#pos-new', body).addEventListener('click', () => editDialog(null));
+    $$('.pos-edit', body).forEach((b) => b.addEventListener('click', () => {
+      editDialog(cat.find((x) => x.id === b.closest('.pos-card').dataset.id));
+    }));
+  }
+
+  /* --- журнал действий: кто что менял --- */
+  async function renderAudit() {
+    const users = await loadUsers(true);
+    const d0 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    body.innerHTML = `
+      <div class="page-head"><h2>Журнал действий</h2></div>
+      <p class="muted small prod-intro">Права и пользователи, утверждённые цены, передача заказов, исправления отметок цеха, решения ОТК.
+        Записи не удаляются и не правятся.</p>
+      <div class="toolbar" style="margin-bottom:12px">
+        <label class="small">с <input type="date" id="au-from" value="${d0}"></label>
+        <label class="small">по <input type="date" id="au-to" value="${todayISO()}"></label>
+        <select id="au-user"><option value="">Все пользователи</option>${users.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
+      </div>
+      <div id="au-out"></div>`;
+    const out = $('#au-out', body);
+    async function load() {
+      const qs = new URLSearchParams();
+      if ($('#au-from', body).value) qs.set('from', $('#au-from', body).value);
+      if ($('#au-to', body).value) qs.set('to', $('#au-to', body).value);
+      if ($('#au-user', body).value) qs.set('user_id', $('#au-user', body).value);
+      const rows = await api('/api/audit?' + qs);
+      out.innerHTML = rows.length ? `<div class="panel tbl-wrap"><table class="tbl">
+        <thead><tr><th>Когда</th><th>Кто</th><th>Действие</th><th>Подробно</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr><td style="white-space:nowrap">${fmtDateTime(r.created_at)}</td><td>${esc(r.user_name || '—')}</td>
+          <td><b>${esc(r.action)}</b></td><td class="small">${esc(r.details)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<div class="panel empty-note">За этот период действий нет</div>';
+    }
+    $$('#au-from, #au-to, #au-user', body).forEach((el) => el.addEventListener('change', () => load().catch(toastErr)));
+    await load();
   }
 
 
@@ -2792,6 +2972,7 @@ views.settings = async function (box, arg, query) {
           <td>${inp('ops', i, 'perHour', o.perHour, 'pr-in', `placeholder="${m ? 'машина: ' + esc(m.perHour) : '0'}"`)}</td>
           <td>${m ? '<span class="muted small">—</span>' : inp('ops', i, 'people', o.people, 'pr-in pr-xs')}</td>
           <td>${o.optional ? `<label class="check-fld"><input type="checkbox" data-k="ops" data-i="${i}" data-f="active" ${o.active !== false ? 'checked' : ''}><span></span></label>` : '<span class="muted small" title="У операции своя цена в прайсе, выключать нельзя">всегда</span>'}</td>
+          <td><label class="check-fld" title="После этой операции работу принимает ОТК"><input type="checkbox" data-k="ops" data-i="${i}" data-f="qc" ${o.qc ? 'checked' : ''}><span></span></label></td>
           <td>${approx(o)}</td>
         </tr>`;
       }).join('');
@@ -2853,12 +3034,20 @@ views.settings = async function (box, arg, query) {
         <div class="panel panel-pad cfg-section">
           <h4>Операции и нормы</h4>
           <p class="muted small" style="margin-bottom:8px">Если у операции выбрана машина и нормы оставлены пустыми, берутся нормы машины.
-            Операции с галочкой «вкл.» можно выключить: в прайсе у них нет своей цены, и они пропадут из техкарты.</p>
+            Операции с галочкой «вкл.» можно выключить: в прайсе у них нет своей цены, и они пропадут из техкарты.
+            Галочка «ОТК»: после операции работу принимает контролёр, следующие операции ждут приёмки.</p>
           <div class="tbl-wrap"><table class="tbl pr-tbl">
             <thead><tr><th>Операция</th><th>Участок</th><th>Машина</th><th>Ед.</th><th>Приладка, мин</th>
-              <th>Выработка в час</th><th>Людей</th><th>Вкл.</th><th></th></tr></thead>
+              <th>Выработка в час</th><th>Людей</th><th>Вкл.</th><th title="После операции работу принимает ОТК: следующие операции ждут приёмки">ОТК</th><th></th></tr></thead>
             <tbody>${ops}</tbody>
           </table></div>
+        </div>
+
+        <div class="panel panel-pad cfg-section">
+          <h4>Причины паузы</h4>
+          <p class="muted small" style="margin-bottom:8px">Сотрудник выбирает причину, когда ставит задание на паузу. По ним в отчёте «План и факт»
+            видно, сколько стояла работа и почему. Одна причина на строку.</p>
+          <textarea id="pr-reasons" rows="6" style="width:100%;max-width:520px">${esc((P.pauseReasons || []).join('\n'))}</textarea>
         </div>
 
         <div class="panel panel-pad cfg-section">
@@ -2877,6 +3066,10 @@ views.settings = async function (box, arg, query) {
     function bind(root) {
       root.oninput = root.onchange = (e) => {
         const el = e.target;
+        if (el.id === 'pr-reasons') {
+          P.pauseReasons = el.value.split('\n').map((x) => x.trim()).filter(Boolean);
+          return;
+        }
         if (el.id === 'pr-waste') {
           P.waste = { ...(P.waste || {}), digitalPct: el.value === '' ? 0 : Number(el.value), approx: false };
           return;
@@ -2953,7 +3146,10 @@ views.settings = async function (box, arg, query) {
   }
 
   function render() {
+    if (!tab) { body.innerHTML = '<div class="panel empty-note">Настроек для вашей должности нет</div>'; return; }
     const fn = tab === 'users' ? renderUsers
+      : tab === 'positions' ? renderPositions
+      : tab === 'audit' ? renderAudit
       : tab === 'pricing' ? renderPricing
       : tab === 'ops' ? renderOps
       : tab === 'calcs' ? renderCalcs
